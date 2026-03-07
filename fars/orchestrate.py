@@ -83,10 +83,12 @@ class FarsOrchestrator:
         "writing_critique",
         "writing_integrate",
         "writing_final_review",
+        "writing_latex",
         "critic_review",
         "supervisor_review",
         "reflection",
         "lark_sync",
+        "lark_upload_pdf",
         "quality_gate",
         "done",
     ]
@@ -215,6 +217,9 @@ class FarsOrchestrator:
             score = float(match.group(1)) if match else 5.0
             if score < 7.0:
                 return self._action_writing_integrate(ws, common)
+            return self._action_writing_latex(ws, common)
+
+        elif stage == "writing_latex":
             return self._action_critic_review(ws, common)
 
         elif stage == "critic_review":
@@ -229,6 +234,9 @@ class FarsOrchestrator:
             return self._action_quality_gate()
 
         elif stage == "lark_sync":
+            return self._action_lark_upload_pdf(ws)
+
+        elif stage == "lark_upload_pdf":
             return self._action_quality_gate()
 
         elif stage == "quality_gate":
@@ -543,6 +551,53 @@ class FarsOrchestrator:
             }],
             description="Top-tier conference-level paper review",
             stage="writing_final_review",
+        )
+
+    def _action_writing_latex(self, ws: str, common: str) -> Action:
+        prompt_template = load_prompt("latex_writer")
+        prompt = (
+            f"{common}\n\n{prompt_template}\n\n"
+            f"Workspace path: {ws}\n"
+            f"SSH server: {self.config.ssh_server}\n"
+            f"Remote base: {self.config.remote_base}"
+        )
+        return Action(
+            action_type="agent_single",
+            agents=[{
+                "name": "latex_writer",
+                "prompt": prompt,
+                "description": "generate NeurIPS LaTeX and compile PDF",
+            }],
+            description="将论文转为 NeurIPS LaTeX 格式并编译 PDF",
+            stage="writing_latex",
+        )
+
+    def _action_lark_upload_pdf(self, ws: str) -> Action:
+        iteration = self.ws.get_status().iteration
+        return Action(
+            action_type="lark_upload",
+            description=(
+                f"上传 PDF 和研究文档到飞书云空间。\n"
+                f"飞书文件夹结构:\n"
+                f"  FARS 研究项目/\n"
+                f"    └── {self.ws.name}/\n"
+                f"        ├── 论文/\n"
+                f"        │   └── v{iteration}_main.pdf\n"
+                f"        ├── 实验报告/\n"
+                f"        │   ├── 先导实验报告.md\n"
+                f"        │   └── 完整实验报告.md\n"
+                f"        ├── 研究日记/\n"
+                f"        │   └── research_diary.md\n"
+                f"        └── 实验数据/\n"
+                f"            └── experiment_table\n\n"
+                f"操作步骤:\n"
+                f"1. 读取 {ws}/writing/latex/main.pdf\n"
+                f"2. 使用 mcp__lark__docx_builtin_import 上传研究日记\n"
+                f"3. 使用 mcp__lark__bitable_v1_appTableRecord_create 更新实验数据表\n"
+                f"4. 使用 mcp__lark__im_v1_message_create 通知团队:\n"
+                f"   「FARS [{self.ws.name}] 迭代 {iteration} 完成，PDF 已更新」"
+            ),
+            stage="lark_upload_pdf",
         )
 
     def _action_critic_review(self, ws: str, common: str) -> Action:
@@ -934,4 +989,56 @@ def cli_migrate(workspace_path: str):
             "stage": ws.get_status().stage,
             "iteration": ws.get_status().iteration,
         },
+    }, indent=2))
+
+
+def cli_migrate_server(project_name: str, ssh_connection: str = "default"):
+    """CLI: Generate server migration commands.
+
+    Prints the SSH commands needed to reorganize server-side files
+    into the v5 project structure. Execute these via SSH MCP.
+    """
+    config = Config()
+    remote_base = config.remote_base
+    project_dir = f"{remote_base}/projects/{project_name}"
+
+    # The migration plan: move flat files into project-specific directory
+    commands = [
+        f"# === 服务器端 v5 迁移: {project_name} ===",
+        f"mkdir -p {project_dir}/{{idea,plan,exp/code,exp/results/pilots,exp/results/full,exp/logs,writing/latex,writing/sections,writing/figures,supervisor,critic,reflection,logs/iterations,lark_sync}}",
+        "",
+        "# 迁移实验代码",
+        f"cp -r {remote_base}/exp/code/* {project_dir}/exp/code/ 2>/dev/null || true",
+        "",
+        "# 迁移实验日志",
+        f"cp -r {remote_base}/exp/logs/* {project_dir}/exp/logs/ 2>/dev/null || true",
+        "",
+        "# 迁移研究想法",
+        f"cp -r {remote_base}/idea/* {project_dir}/idea/ 2>/dev/null || true",
+        "",
+        "# 迁移迭代日志",
+        f"cp -r {remote_base}/logs/* {project_dir}/logs/ 2>/dev/null || true",
+        "",
+        "# 迁移论文草稿",
+        f"cp -r {remote_base}/writing/* {project_dir}/writing/ 2>/dev/null || true",
+        "",
+        "# 创建状态文件",
+        f'echo \'{{"stage": "done", "started_at": 0, "updated_at": 0, "iteration": 1, "errors": []}}\' > {project_dir}/status.json',
+        "",
+        "# 保留共享资源的符号链接",
+        f"ln -sf {remote_base}/models {project_dir}/models 2>/dev/null || true",
+        f"ln -sf {remote_base}/src {project_dir}/src 2>/dev/null || true",
+        "",
+        f"echo '迁移完成: {project_dir}'",
+    ]
+
+    print(json.dumps({
+        "project_name": project_name,
+        "remote_project_dir": project_dir,
+        "commands": commands,
+        "instructions": (
+            "使用 mcp__ssh-mcp-server__execute-command 依次执行上述命令。\n"
+            "模型和源码目录通过符号链接共享，避免重复存储。\n"
+            "迁移后，新项目将在 projects/ 子目录下创建，互不干扰。"
+        ),
     }, indent=2))

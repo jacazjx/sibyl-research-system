@@ -1,61 +1,88 @@
-# FARS Agent Common Instructions
+# FARS Agent 通用指令
 
-## Workspace Convention
+## 语言要求 (CRITICAL)
 
-All research artifacts are stored in a shared workspace directory. Use the Read and Write tools to interact with files.
+**所有用户可见的输出必须使用中文**，包括但不限于：
+- 研究提案 (proposal.md)
+- 实验报告和结果分析
+- 研究日记和过程记录
+- 论文大纲和评审意见
+- 讨论和结论
+- 错误报告和建议
 
-### Directory Structure
+以下可使用英文：
+- 代码和代码注释
+- JSON 数据结构的 key
+- 技术术语（首次出现时附中文解释）
+- 参考文献条目
+
+## 工作区规范
+
+所有研究产出存放在共享工作区目录中。使用 Read 和 Write 工具操作文件。
+
+### 目录结构
 ```
 <workspace>/
-├── status.json              # Project status (managed by orchestrator)
+├── spec.md                  # 项目规格说明（用户编写）
+├── topic.txt                # 研究主题
+├── status.json              # 项目状态（编排器管理）
 ├── idea/
-│   ├── proposal.md          # Final synthesized proposal
-│   ├── alternatives.md      # Backup ideas for pivot
+│   ├── proposal.md          # 最终综合提案
+│   ├── alternatives.md      # 备选方案（用于 pivot）
 │   ├── references.json      # [{title, authors, abstract, url, year}]
-│   ├── hypotheses.md        # Testable hypotheses
-│   ├── perspectives/        # Per-agent independent ideas
-│   ├── debate/              # Cross-critique records
-│   └── result_debate/       # Post-experiment discussion
+│   ├── hypotheses.md        # 可检验假设
+│   ├── initial_ideas.md     # 用户初始想法
+│   ├── references_seed.md   # 用户提供的参考文献
+│   ├── perspectives/        # 各 agent 独立想法
+│   ├── debate/              # 交叉批评记录
+│   └── result_debate/       # 实验后讨论
 ├── plan/
-│   ├── methodology.md       # Detailed methodology
-│   ├── task_plan.json       # Structured task list
-│   └── pilot_plan.json      # Pilot-specific details
+│   ├── methodology.md       # 详细方法论
+│   ├── task_plan.json       # 结构化任务列表
+│   └── pilot_plan.json      # 先导实验详情
 ├── exp/
-│   ├── code/                # Experiment scripts
+│   ├── code/                # 实验脚本
 │   ├── results/
-│   │   ├── pilots/          # Pilot experiment results
-│   │   └── full/            # Full experiment results
-│   ├── logs/                # Execution logs
-│   └── experiment_db.jsonl  # Experiment database
+│   │   ├── pilots/          # 先导实验结果
+│   │   └── full/            # 完整实验结果
+│   ├── logs/                # 执行日志
+│   └── experiment_db.jsonl  # 实验数据库
 ├── writing/
-│   ├── outline.md           # Paper outline
-│   ├── sections/            # Individual sections
-│   ├── critique/            # Section critiques
-│   ├── paper.md             # Integrated paper
-│   ├── review.md            # Final review
-│   └── figures/             # Generated figures
-├── supervisor/              # Supervisor reviews
-├── critic/                  # Critic feedback
-├── reflection/              # Reflection artifacts
-└── logs/                    # Pipeline logs
+│   ├── outline.md           # 论文大纲
+│   ├── sections/            # 各节内容
+│   ├── critique/            # 各节评审
+│   ├── paper.md             # 完整论文（中文草稿）
+│   ├── review.md            # 终审报告
+│   ├── figures/             # 图表
+│   └── latex/               # LaTeX 源文件（NeurIPS 格式）
+│       ├── main.tex
+│       ├── references.bib
+│       └── main.pdf
+├── supervisor/              # 监督审查
+├── critic/                  # 批评反馈
+├── reflection/              # 反思产出
+├── logs/                    # 流水线日志
+│   ├── iterations/
+│   └── research_diary.md    # 研究日记（中文）
+└── lark_sync/               # 飞书同步数据
 ```
 
-## File I/O
+## 文件读写
 
-- **Read files**: Use the `Read` tool with absolute paths: `<workspace>/<relative_path>`
-- **Write files**: Use the `Write` tool with absolute paths
-- **List files**: Use `Glob` to find files in the workspace
+- **读取文件**: 使用 `Read` 工具，绝对路径: `<workspace>/<相对路径>`
+- **写入文件**: 使用 `Write` 工具，绝对路径
+- **查找文件**: 使用 `Glob` 工具
 
-## Model Guidelines
+## 模型选用
 
-- Use small models for experiments: GPT-2, BERT-base, Qwen/Qwen2-0.5B
-- Keep experiments runnable on single GPU
-- Set random seeds for reproducibility
+- 实验用小模型: GPT-2, BERT-base, Qwen/Qwen2-0.5B
+- 保证单 GPU 可运行
+- 设置随机种子确保可重现
 
-## Quality Standards
+## 质量标准
 
-- Be specific and concrete in all outputs
-- Every claim must be supported by evidence
-- Flag suspicious results (>30% improvement from simple methods)
-- Save sample outputs, not just aggregate metrics
-- Be honest about negative results
+- 所有输出必须具体且可操作
+- 每项声明必须有证据支持
+- 标记可疑结果（简单方法 >30% 提升）
+- 保存样本输出，不仅仅是统计量
+- 诚实报告负面结果

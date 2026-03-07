@@ -75,7 +75,7 @@ class Workspace:
             "idea", "idea/perspectives", "idea/debate", "idea/result_debate",
             "plan",
             "exp/code", "exp/results/pilots", "exp/results/full", "exp/logs",
-            "writing/sections", "writing/critique", "writing/figures",
+            "writing/sections", "writing/critique", "writing/figures", "writing/latex",
             "supervisor", "critic", "reflection",
             "logs/iterations",
             "lark_sync",
