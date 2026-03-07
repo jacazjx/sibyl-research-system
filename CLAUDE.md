@@ -27,7 +27,29 @@ python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 所有 Sibyl CLI 命令（`cli_next`, `cli_record` 等）必须在项目根目录 `/Users/cwan0785/sibyl-system` 下执行，因为 `from sibyl.xxx` 依赖包路径。
 
-## 模型选择建议
+## Agent 架构（context: fork Skills）
+
+Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立 subagent context 中：
+
+### Agent Tier 定义（`.claude/agents/`）
+- `sibyl-heavy` → Opus 4.6（synthesizer, supervisor, editor, critic, reflection）
+- `sibyl-standard` → Opus 4.6（literature, planner, experimenter, idea generation, writing）
+- `sibyl-light` → Sonnet 4.6（optimist, skeptic, strategist, section-critic, cross-critique）
+
+### Skills（`.claude/skills/sibyl-*/`）
+编排器返回的 action 包含 `action_type: "skill"` 或 `"skills_parallel"`，主 session 通过 `/sibyl-xxx` 或 Skill tool 调用。每个 skill 通过 `!`command`` 动态加载对应的 prompt 模板。
+
+### Action 类型
+| action_type | 说明 |
+|---|---|
+| `skill` | 单个 fork skill 执行 |
+| `skills_parallel` | 多个 fork skill 并行 |
+| `agents_parallel` | 遗留：cross-critique 仍用此方式（6 个动态 prompt） |
+| `bash` | 执行 shell 命令 |
+| `lark_sync` / `lark_upload` | 飞书同步 |
+| `done` / `paused` | 终止/暂停 |
+
+### 模型选择
 - 默认 session 模型: **Sonnet**（最佳性价比）
-- Sibyl action 输出包含 `model_tier` 字段，按需切换
-- 纯轻量任务（交叉批评、结果辩论）可切 Haiku 节省额度
+- Agent tier 通过 `.claude/agents/sibyl-{heavy,standard,light}.md` 声明式配置
+- 纯轻量任务（交叉批评、结果辩论）自动使用 Sonnet
