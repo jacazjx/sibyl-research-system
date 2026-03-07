@@ -53,3 +53,13 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 - 默认 session 模型: **Sonnet**（最佳性价比）
 - Agent tier 通过 `.claude/agents/sibyl-{heavy,standard,light}.md` 声明式配置
 - 纯轻量任务（交叉批评、结果辩论）自动使用 Sonnet
+
+## Git 提交规则（强制）
+
+以下情况**必须立即提交 git commit**：
+1. 修复 bug（系统代码、编排逻辑、prompt 等）
+2. 自我改进（更新记忆、优化 prompt、改进错误处理）
+3. 系统逻辑代码有修改（`sibyl/` 下任何文件、`plugin/` 下的 command）
+
+提交格式遵循 conventional commits：`fix:`, `feat:`, `refactor:`, `docs:` 等。
+按功能拆分提交，不要把不相关的改动混在一起。
