@@ -583,13 +583,16 @@ class FarsOrchestrator:
             max_polls=self.config.gpu_poll_max_attempts,
         )
         gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
+        interval_min = self.config.gpu_poll_interval_sec // 60
+        max_str = (f"最多 {self.config.gpu_poll_max_attempts} 次"
+                   if self.config.gpu_poll_max_attempts > 0
+                   else "无限等待")
         return Action(
             action_type="bash",
             bash_command=script,
             description=(
                 f"轮询等待空闲 GPU（候选: [{gpu_ids_str}]，"
-                f"每 {self.config.gpu_poll_interval_sec}s 检查一次，"
-                f"最多 {self.config.gpu_poll_max_attempts} 次）"
+                f"每 {interval_min}min 检查一次，{max_str}）"
             ),
             stage=stage,
         )

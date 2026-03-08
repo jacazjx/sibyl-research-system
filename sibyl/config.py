@@ -31,8 +31,8 @@ class Config:
     # GPU polling (for shared servers with other users)
     gpu_poll_enabled: bool = True
     gpu_free_threshold_mb: int = 2000  # GPU is "free" if memory < this
-    gpu_poll_interval_sec: int = 60    # seconds between polls
-    gpu_poll_max_attempts: int = 60    # max polls before timeout (60min)
+    gpu_poll_interval_sec: int = 600   # seconds between polls (10 min)
+    gpu_poll_max_attempts: int = 0     # 0 = infinite (no timeout)
 
     # Pilot experiments
     pilot_samples: int = 16

@@ -326,8 +326,8 @@ def gpu_poll_wait_script(
     ssh_server: str,
     candidate_gpu_ids: list[int],
     threshold_mb: int = DEFAULT_FREE_THRESHOLD_MB,
-    poll_interval_sec: int = 60,
-    max_polls: int = 60,
+    poll_interval_sec: int = 600,
+    max_polls: int = 0,
     marker_file: str = "/tmp/sibyl_gpu_free.json",
 ) -> str:
     """Generate a bash script that polls for free GPUs via SSH.
@@ -336,7 +336,8 @@ def gpu_poll_wait_script(
     1. Runs nvidia-smi on the remote server every poll_interval_sec seconds
     2. Checks if any candidate GPU has memory below threshold
     3. When free GPUs are found, writes them to marker_file and exits 0
-    4. After max_polls attempts, exits 1 (timeout)
+    4. If max_polls > 0, exits 1 after that many attempts (timeout)
+    5. If max_polls == 0 (default), polls indefinitely until GPUs are free
 
     This runs as a pure bash command — no LLM tokens consumed during polling.
 
@@ -344,27 +345,38 @@ def gpu_poll_wait_script(
         ssh_server: SSH host to connect to
         candidate_gpu_ids: GPU IDs to check
         threshold_mb: Free memory threshold in MB
-        poll_interval_sec: Seconds between polls
-        max_polls: Maximum number of poll attempts
+        poll_interval_sec: Seconds between polls (default 600 = 10 min)
+        max_polls: Maximum poll attempts; 0 = infinite (no timeout)
         marker_file: Path to write free GPU IDs JSON when found
 
     Returns:
         Bash script string
     """
     gpu_ids_str = ",".join(str(g) for g in candidate_gpu_ids)
-    # Use ssh-mcp is not available in bash; use direct ssh
+    limit_label = f"max {max_polls}" if max_polls > 0 else "unlimited"
+
+    if max_polls > 0:
+        loop_header = f"for i in $(seq 1 {max_polls}); do"
+        loop_footer = f"""done
+
+echo "Timeout after {max_polls} polls ({max_polls * poll_interval_sec}s)"
+exit 1"""
+    else:
+        loop_header = "i=0\nwhile true; do\n    i=$((i + 1))"
+        loop_footer = "done"
+
     return f'''#!/bin/bash
 # Sibyl GPU poll: wait for free GPUs on {ssh_server}
 # Candidates: [{gpu_ids_str}], threshold: {threshold_mb}MB
-# Poll every {poll_interval_sec}s, max {max_polls} attempts
+# Poll every {poll_interval_sec}s, {limit_label} attempts
 
 MARKER="{marker_file}"
 rm -f "$MARKER"
 
-for i in $(seq 1 {max_polls}); do
+{loop_header}
     OUTPUT=$(ssh {ssh_server} "nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits" 2>/dev/null)
     if [ $? -ne 0 ]; then
-        echo "[poll $i/{max_polls}] SSH failed, retrying in {poll_interval_sec}s..."
+        echo "[poll $i] SSH failed, retrying in {poll_interval_sec}s..."
         sleep {poll_interval_sec}
         continue
     fi
@@ -389,17 +401,14 @@ for i in $(seq 1 {max_polls}); do
     done <<< "$OUTPUT"
 
     if [ -n "$FREE_GPUS" ]; then
-        echo "[poll $i/{max_polls}] Found free GPUs: $FREE_GPUS"
+        echo "[poll $i] Found free GPUs: $FREE_GPUS"
         echo "{{\\"free_gpus\\": [$FREE_GPUS], \\"poll_count\\": $i}}" > "$MARKER"
         exit 0
     fi
 
-    echo "[poll $i/{max_polls}] No free GPUs (all above {threshold_mb}MB), waiting {poll_interval_sec}s..."
+    echo "[poll $i] No free GPUs (all above {threshold_mb}MB), waiting {poll_interval_sec}s..."
     sleep {poll_interval_sec}
-done
-
-echo "Timeout after {max_polls} polls ({max_polls * poll_interval_sec}s)"
-exit 1
+{loop_footer}
 '''
 
 

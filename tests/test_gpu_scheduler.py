@@ -502,6 +502,19 @@ class TestGpuPollWaitScript:
         assert "cs8000d" in script
         assert "0,1,2,3" in script
 
+    def test_infinite_poll_default(self):
+        """Default max_polls=0 generates while-true loop (no timeout)."""
+        script = gpu_poll_wait_script("host", [0, 1])
+        assert "while true" in script
+        assert "Timeout" not in script
+        assert "unlimited" in script
+
+    def test_finite_poll(self):
+        """max_polls > 0 generates for loop with timeout."""
+        script = gpu_poll_wait_script("host", [0], max_polls=10)
+        assert "seq 1 10" in script
+        assert "Timeout" in script
+
     def test_custom_parameters(self):
         script = gpu_poll_wait_script(
             ssh_server="myserver",
@@ -515,7 +528,7 @@ class TestGpuPollWaitScript:
         assert "0,2" in script
         assert "4000" in script
         assert "30" in script  # poll interval
-        assert "10" in script  # max polls
+        assert "seq 1 10" in script  # finite loop
         assert "/tmp/test_marker.json" in script
 
     def test_marker_file_path(self):
