@@ -70,11 +70,12 @@ class AgentTask:
 @dataclass
 class Action:
     """An action for the main Claude Code session to execute."""
-    action_type: str  # "skill", "skills_parallel", "agents_parallel", "agent_single", "team", "bash", "done", "paused"
+    action_type: str  # "skill", "skills_parallel", "agents_parallel", "agent_single", "team", "bash", "gpu_poll", "done", "paused"
     agents: list[dict] | None = None  # for legacy agent actions
     skills: list[dict] | None = None  # for fork skill actions: [{"name": "sibyl-xxx", "args": "..."}]
     team: dict | None = None  # for Agent Teams: {"prompt": "...", "teammates": [{"role": "...", "prompt": "..."}], "require_plan_approval": bool}
     bash_command: str | None = None  # for bash actions
+    gpu_poll: dict | None = None  # for gpu_poll actions: {"ssh_connection", "query_cmd", "candidate_gpu_ids", "threshold_mb", "interval_sec", "marker_file"}
     description: str = ""
     stage: str = ""
     estimated_minutes: int = 0  # expected runtime hint for experiment batches
@@ -568,31 +569,31 @@ class FarsOrchestrator:
         )
 
     def _gpu_poll_action(self, stage: str) -> Action:
-        """Return a bash action that polls for free GPUs without LLM tokens.
+        """Return a gpu_poll action for the main session to execute.
 
-        The script SSH-queries nvidia-smi periodically and writes free GPU IDs
-        to /tmp/sibyl_gpu_free.json when available. The orchestrator reads
-        this file on the next cli_next() call.
+        The main session should:
+        1. Use SSH MCP (execute-command) to run the query_cmd on ssh_connection
+        2. Call parse_free_gpus() with the output to find free GPUs
+        3. If free GPUs found: write marker_file and re-call cli_next()
+        4. If no free GPUs: sleep interval_sec, then repeat from step 1
+        5. Loop indefinitely (no max attempts) until GPUs become available
         """
-        from sibyl.gpu_scheduler import gpu_poll_wait_script
-        script = gpu_poll_wait_script(
-            ssh_server=self.config.ssh_server,
-            candidate_gpu_ids=self.config.gpu_ids,
-            threshold_mb=self.config.gpu_free_threshold_mb,
-            poll_interval_sec=self.config.gpu_poll_interval_sec,
-            max_polls=self.config.gpu_poll_max_attempts,
-        )
+        from sibyl.gpu_scheduler import nvidia_smi_query_cmd
         gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
         interval_min = self.config.gpu_poll_interval_sec // 60
-        max_str = (f"最多 {self.config.gpu_poll_max_attempts} 次"
-                   if self.config.gpu_poll_max_attempts > 0
-                   else "无限等待")
         return Action(
-            action_type="bash",
-            bash_command=script,
+            action_type="gpu_poll",
+            gpu_poll={
+                "ssh_connection": "default",
+                "query_cmd": nvidia_smi_query_cmd(),
+                "candidate_gpu_ids": self.config.gpu_ids,
+                "threshold_mb": self.config.gpu_free_threshold_mb,
+                "interval_sec": self.config.gpu_poll_interval_sec,
+                "marker_file": "/tmp/sibyl_gpu_free.json",
+            },
             description=(
                 f"轮询等待空闲 GPU（候选: [{gpu_ids_str}]，"
-                f"每 {interval_min}min 检查一次，{max_str}）"
+                f"每 {interval_min}min 通过 SSH MCP 检查，无限等待）"
             ),
             stage=stage,
         )

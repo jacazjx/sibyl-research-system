@@ -861,20 +861,21 @@ class TestExperimentParallel:
 class TestGpuPollingIntegration:
     """Test GPU polling path in _action_experiment_batch."""
 
-    def test_poll_enabled_no_result_returns_bash_poll(self, make_orchestrator):
-        """When gpu_poll_enabled=True and no poll result, returns bash poll action."""
+    def test_poll_enabled_no_result_returns_gpu_poll(self, make_orchestrator):
+        """When gpu_poll_enabled=True and no poll result, returns gpu_poll action."""
         o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=True)
         action = o.get_next_action()
-        assert action["action_type"] == "bash"
-        assert "nvidia-smi" in action["bash_command"]
+        assert action["action_type"] == "gpu_poll"
+        assert action["gpu_poll"] is not None
+        assert action["gpu_poll"]["ssh_connection"] == "default"
+        assert "nvidia-smi" in action["gpu_poll"]["query_cmd"]
+        assert action["gpu_poll"]["candidate_gpu_ids"] == [0, 1, 2, 3]
         assert "轮询" in action["description"]
         assert action["stage"] == "pilot_experiments"
 
     def test_poll_enabled_with_result_uses_free_gpus(self, make_orchestrator, tmp_path):
         """When poll result exists, uses free GPUs for scheduling."""
         o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=True)
-        # Write poll result marker file
-        import tempfile
         marker = Path("/tmp/sibyl_gpu_free.json")
         marker.write_text(json.dumps({"free_gpus": [0, 2], "poll_count": 3}))
         try:
@@ -917,8 +918,8 @@ class TestGpuPollingIntegration:
         marker.write_text(json.dumps({"free_gpus": [4, 5], "poll_count": 2}))
         try:
             action = o.get_next_action()
-            assert action["action_type"] == "bash"
-            assert "nvidia-smi" in action["bash_command"]
+            assert action["action_type"] == "gpu_poll"
+            assert action["gpu_poll"]["candidate_gpu_ids"] == [0, 1]
         finally:
             marker.unlink(missing_ok=True)
 
@@ -935,27 +936,27 @@ class TestGpuPollingIntegration:
         assert "0" in action["skills"][0]["args"]
 
     def test_poll_action_includes_config_params(self, make_orchestrator):
-        """Poll bash script uses config parameters."""
+        """Poll action includes config parameters in gpu_poll dict."""
         o = make_orchestrator(
             stage="experiment_cycle",
             gpu_poll_enabled=True,
             gpu_free_threshold_mb=4000,
             gpu_poll_interval_sec=30,
-            gpu_poll_max_attempts=10,
             ssh_server="myserver",
         )
         action = o.get_next_action()
-        assert action["action_type"] == "bash"
-        assert "myserver" in action["bash_command"]
-        assert "4000" in action["bash_command"]
-        assert "30" in action["bash_command"]
+        assert action["action_type"] == "gpu_poll"
+        poll = action["gpu_poll"]
+        assert poll["threshold_mb"] == 4000
+        assert poll["interval_sec"] == 30
+        assert "nvidia-smi" in poll["query_cmd"]
 
     def test_poll_experiment_cycle_also_polls(self, make_orchestrator):
         """experiment_cycle stage also uses GPU polling when enabled."""
         o = make_orchestrator(stage="experiment_cycle", gpu_poll_enabled=True)
         action = o.get_next_action()
-        assert action["action_type"] == "bash"
-        assert "nvidia-smi" in action["bash_command"]
+        assert action["action_type"] == "gpu_poll"
+        assert action["gpu_poll"] is not None
 
     def test_poll_result_empty_free_gpus_repolls(self, make_orchestrator):
         """If poll result has empty free_gpus list, effective_gpu_ids is empty → re-poll."""
@@ -965,7 +966,6 @@ class TestGpuPollingIntegration:
         try:
             action = o.get_next_action()
             # Empty free_gpus → no match with config → re-poll
-            assert action["action_type"] == "bash"
-            assert "nvidia-smi" in action["bash_command"]
+            assert action["action_type"] == "gpu_poll"
         finally:
             marker.unlink(missing_ok=True)

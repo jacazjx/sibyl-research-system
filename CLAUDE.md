@@ -47,7 +47,22 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 | `team` | Agent Team 多人协作（辩论阶段），可含 `codex_step` |
 | `agents_parallel` | 遗留：cross-critique 仍用此方式（6 个动态 prompt） |
 | `bash` | 执行 shell 命令 |
+| `gpu_poll` | GPU 轮询等待（见下方说明） |
 | `done` / `paused` | 终止/暂停 |
+
+### GPU 轮询（`gpu_poll` action）
+当所有 GPU 被占用时，orchestrator 返回 `action_type: "gpu_poll"`，主 session 执行：
+```
+1. 用 SSH MCP (execute-command, connection=action.gpu_poll.ssh_connection)
+   执行 action.gpu_poll.query_cmd
+2. 调用 parse_free_gpus(output, candidate_gpu_ids, threshold_mb) 解析结果
+3. 如果有空闲 GPU:
+   - 写入 marker_file: {"free_gpus": [...], "poll_count": N}
+   - 重新调用 cli_next() 获取实验任务
+4. 如果没有空闲 GPU:
+   - sleep action.gpu_poll.interval_sec 秒
+   - 回到步骤 1 继续轮询（无限等待）
+```
 
 ### Codex 集成
 - `codex_enabled`: 启用后，idea_debate、result_debate、supervisor_review 阶段自动引入 Codex 独立审查
