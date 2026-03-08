@@ -24,6 +24,10 @@ def make_orchestrator(tmp_path):
     def _make(stage="init", iteration=0, **config_overrides):
         config = Config()
         config.workspaces_dir = tmp_path
+        # Default lark_enabled=False for tests to avoid lark_sync interleaving.
+        # Tests that specifically test lark behavior should pass lark_enabled=True.
+        if "lark_enabled" not in config_overrides:
+            config.lark_enabled = False
         for k, v in config_overrides.items():
             setattr(config, k, v)
 

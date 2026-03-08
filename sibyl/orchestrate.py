@@ -948,10 +948,16 @@ class FarsOrchestrator:
         )
 
     def _action_lark_sync(self, ws: str) -> Action:
+        status = self.ws.get_status()
+        resume_to = status.resume_after_sync
+        if resume_to:
+            desc = f"飞书增量同步（完成后继续 → {resume_to}）"
+        else:
+            desc = "Sync research data to Feishu (docs, bitable, notifications)"
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-lark-sync", "args": ws}],
-            description="Sync research data to Feishu (docs, bitable, notifications)",
+            description=desc,
             stage="lark_sync",
         )
 
@@ -1179,6 +1185,51 @@ class FarsOrchestrator:
 
         Returns (next_stage, new_iteration). new_iteration is non-None only
         when the quality gate loops back for a new iteration.
+
+        When lark_enabled=True, inserts a lark_sync step after every
+        substantive stage (except loop-backs to the same stage).
+        The intended next stage is saved in resume_after_sync so that
+        lark_sync knows where to go when it completes.
+        """
+        # lark_sync completed: resume to the stage saved before sync
+        if current_stage == "lark_sync":
+            status = self.ws.get_status()
+            resume_to = status.resume_after_sync
+            if resume_to:
+                self.ws.set_resume_after_sync("")
+                return (resume_to, None)
+            # Fallback: normal pipeline progression (quality_gate)
+            return ("quality_gate", None)
+
+        # Compute the natural next stage (without lark_sync interleaving)
+        natural_next, natural_iter = self._natural_next_stage(
+            current_stage, result, score
+        )
+
+        # Interleave lark_sync after substantive stages when enabled.
+        # Skip sync when:
+        # - lark disabled
+        # - looping back to same stage (experiment batches, etc.)
+        # - init (transient), quality_gate/done (terminal)
+        # - natural_next is already lark_sync (pipeline position after reflection)
+        _NO_SYNC_STAGES = {"init", "quality_gate", "done"}
+        if (self.config.lark_enabled
+                and current_stage not in _NO_SYNC_STAGES
+                and natural_next != current_stage
+                and natural_next != "lark_sync"):
+            self.ws.set_resume_after_sync(natural_next)
+            if natural_iter is not None:
+                self.ws.update_iteration(natural_iter)
+            return ("lark_sync", None)
+
+        return (natural_next, natural_iter)
+
+    def _natural_next_stage(self, current_stage: str, result: str = "",
+                            score: float | None = None) -> tuple[str, int | None]:
+        """Compute the next stage without lark_sync interleaving.
+
+        Contains all branching logic: experiment loops, PIVOT, writing
+        revisions, quality gate side effects, etc.
         """
         # experiment_decision: PIVOT loops back to idea_debate
         if current_stage == "experiment_decision":
@@ -1216,7 +1267,6 @@ class FarsOrchestrator:
             review = self.ws.read_file("writing/review.md") or ""
             match = re.search(r"SCORE:\s*(\d+(?:\.\d+)?)", review, re.IGNORECASE)
             review_score = float(match.group(1)) if match else 5.0
-            # Count existing revision rounds via orchestrator-managed markers
             critique_dir = self.ws.root / "writing/critique"
             if critique_dir.exists():
                 revision_rounds = len([
@@ -1237,7 +1287,7 @@ class FarsOrchestrator:
         if current_stage == "init":
             return ("literature_search", None)
 
-        # lark stages: skip if lark disabled
+        # lark stages: skip if lark disabled (direct pipeline path)
         if current_stage == "reflection" and not self.config.lark_enabled:
             return ("quality_gate", None)
 
@@ -1245,14 +1295,12 @@ class FarsOrchestrator:
         if current_stage == "quality_gate":
             is_done, qg_score, threshold, max_iters, iteration = self._is_pipeline_done()
             if is_done:
-                # Tag final iteration (cross-project evolution is manual: sibyl evolve --apply)
                 self.ws.git_tag(
                     f"v{iteration}",
                     f"Iteration {iteration} complete, score={qg_score}",
                 )
                 return ("done", None)
             else:
-                # Tag end of iteration, archive artifacts, advance counter
                 self.ws.git_tag(
                     f"iter-{iteration}",
                     f"End of iteration {iteration}, score={qg_score}",
@@ -1261,9 +1309,7 @@ class FarsOrchestrator:
                     self.ws.archive_iteration(iteration)
                 except OSError as e:
                     self.ws.add_error(f"Archive failed for iteration {iteration}: {e}")
-                # Clear stale artifacts that would pollute the next iteration
                 self._clear_iteration_artifacts()
-                # Iteration counter update is atomic with stage in record_result
                 return ("literature_search", iteration + 1)
 
         try:
