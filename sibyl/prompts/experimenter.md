@@ -49,6 +49,50 @@ ssh cs8000d "CUDA_VISIBLE_DEVICES={gpu_id} conda run -n sibyl_{project} python /
 - Handle OOM gracefully
 - Make experiments batch-resumable
 
+## 显存探测与 Batch Size 自动优化（CRITICAL）
+
+**每个训练任务正式开始前，必须先运行显存探测脚本，确定当前 GPU 上能使用的最大 batch size。**
+
+### 探测流程
+在实验脚本中加入探测函数，或作为独立预处理步骤：
+
+```python
+def find_max_batch_size(model, sample_input_fn, device, start=128, min_bs=1):
+    """二分搜索当前 GPU 能承载的最大 batch size。"""
+    import torch, gc
+    high, best = start, min_bs
+    while min_bs <= high:
+        mid = (min_bs + high) // 2
+        try:
+            torch.cuda.empty_cache(); gc.collect()
+            batch = sample_input_fn(mid)
+            batch = {k: v.to(device) for k, v in batch.items()}
+            with torch.no_grad():
+                model(**batch)
+            best = mid
+            min_bs = mid + 1
+        except torch.cuda.OutOfMemoryError:
+            high = mid - 1
+            torch.cuda.empty_cache(); gc.collect()
+    return best
+```
+
+### 使用规则
+1. 如果 task_plan.json 中 `max_batch_size_hint` 为 `"auto-detect"`，必须执行探测
+2. 探测结果写入 `{workspace}/exp/results/{task_id}_gpu_profile.json`：
+   ```json
+   {"gpu_name": "RTX 4090", "vram_total_mb": 24564, "max_batch_size": 64,
+    "vram_used_mb": 21200, "utilization_pct": 86.3}
+   ```
+3. 正式训练用探测出的 max_batch_size（可留 10% 余量防 OOM）
+4. 如果探测结果显示 GPU 利用率 < 50%，考虑增大序列长度或模型并行度
+
+### 多卡策略
+根据 task_plan.json 中的 `multi_gpu_strategy` 字段：
+- `"single"`: 单卡运行，`CUDA_VISIBLE_DEVICES` 设为 1 张 GPU
+- `"DataParallel"`: 用 `torch.nn.DataParallel` 包装模型，batch size 可按卡数线性放大
+- `"DDP"`: 用 `torchrun --nproc_per_node=N` 启动分布式训练，每卡独立 batch size
+
 ## Evaluation Best Practices (Deep Learning)
 - Use standard public benchmarks (e.g., GLUE, SQuAD, WMT, ImageNet subsets)
 - Always include baseline comparisons (at minimum: vanilla model, published SOTA numbers)

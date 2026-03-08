@@ -24,7 +24,30 @@ For EACH experiment task, also design a PILOT version:
 - Include ablation studies: one ablation per proposed component
 - Do NOT plan for multi-seed cross-validation or statistical significance testing
 - Focus on: benchmark performance, ablation results, baseline comparisons
-- Estimate GPU hours per task for scheduling
+
+## GPU 资源规划（必须自主决定）
+
+你必须为每个 task 独立分析并决定 GPU 分配策略，不要一律填 `gpu_count: 1`。
+
+**决策依据：**
+- **模型大小**：<1B 参数 → 1 GPU；1-7B → 1-2 GPU；7B+ → 2-4 GPU（视显存需求）
+- **数据量**：大数据集训练可通过多卡 DataParallel 加速
+- **任务类型**：推理/评估任务通常 1 GPU 即可；训练任务根据模型大小和数据量决定
+- **实验性质**：baseline 和 ablation 可以各用 1 GPU 并行跑；主实验可用多卡加速
+
+**在 task_plan.json 中体现：**
+```json
+{
+  "id": "train_main",
+  "gpu_count": 2,
+  "multi_gpu_strategy": "DataParallel",  // "DataParallel" | "DDP" | "single"
+  "estimated_minutes": 90,
+  "max_batch_size_hint": "auto-detect"
+}
+```
+
+- `multi_gpu_strategy`: 建议的多卡策略（experimenter 参考执行）
+- `max_batch_size_hint`: 设为 `"auto-detect"` 表示实验前先做显存探测自动确定最大 batch size
 
 ## Output
 - `{workspace}/plan/methodology.md`: Detailed methodology (setup, baselines, metrics, evaluation benchmarks)
@@ -37,7 +60,7 @@ For EACH experiment task, also design a PILOT version:
     "estimated_minutes": 30,
     "pilot": {"samples": 16, "seed": 42, "timeout": 600, "pass_criteria": "..."}}]}
   ```
-  **CRITICAL**: Every task MUST include `gpu_count` (number of GPUs needed) and `estimated_minutes` (expected runtime). The GPU scheduler will reject task plans with missing values and block experiment execution.
+  **CRITICAL**: Every task MUST include `gpu_count` (number of GPUs needed), `estimated_minutes` (expected runtime), and `multi_gpu_strategy` ("single" | "DataParallel" | "DDP"). The GPU scheduler will reject task plans with missing gpu_count/estimated_minutes and block experiment execution.
 - `{workspace}/plan/pilot_plan.json`: Pilot-specific details
 
 ### fix-gpu 模式
