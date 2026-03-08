@@ -12,6 +12,15 @@ exp/
 logs/
 writing/
 
+# Sensitive / credentials
+user_token_cache.json
+*.secret
+.env
+.env.*
+
+# Playwright MCP logs
+.playwright-mcp/
+
 # Misc temp files
 .history/
 cli_pause
