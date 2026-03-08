@@ -246,6 +246,108 @@ class Workspace:
         cmd = ["git", "tag", "-a", tag, "-m", message or tag]
         subprocess.run(cmd, cwd=self.root, capture_output=True)
 
+    # ══════════════════════════════════════════════
+    # Checkpoint tracking (sub-step progress within a stage)
+    # ══════════════════════════════════════════════
+
+    def _checkpoint_path(self, checkpoint_dir: str) -> Path:
+        return self._check_path(f"{checkpoint_dir}/.checkpoint.json")
+
+    def create_checkpoint(self, stage: str, checkpoint_dir: str,
+                          steps: dict[str, str], iteration: int):
+        """Create a new checkpoint for a stage with sub-steps.
+
+        Args:
+            stage: Pipeline stage name
+            checkpoint_dir: Relative dir for .checkpoint.json
+            steps: {step_id: relative_file_path} mapping
+            iteration: Current iteration number
+        """
+        cp = {
+            "version": 1,
+            "stage": stage,
+            "iteration": iteration,
+            "stage_started_at": time.time(),
+            "steps": {
+                step_id: {
+                    "status": "pending",
+                    "file": file_path,
+                    "completed_at": 0.0,
+                    "file_mtime": 0.0,
+                    "file_size": 0,
+                }
+                for step_id, file_path in steps.items()
+            },
+        }
+        self.write_json(f"{checkpoint_dir}/.checkpoint.json", cp)
+
+    def load_checkpoint(self, checkpoint_dir: str) -> dict | None:
+        return self.read_json(f"{checkpoint_dir}/.checkpoint.json")
+
+    def complete_checkpoint_step(self, checkpoint_dir: str, step_id: str):
+        """Mark a sub-step as completed with file validation data."""
+        cp = self.load_checkpoint(checkpoint_dir)
+        if cp is None or step_id not in cp["steps"]:
+            return
+        step = cp["steps"][step_id]
+        file_path = self._check_path(step["file"])
+        if not file_path.exists():
+            return
+        stat = file_path.stat()
+        step["status"] = "completed"
+        step["completed_at"] = time.time()
+        step["file_mtime"] = stat.st_mtime
+        step["file_size"] = stat.st_size
+        self.write_json(f"{checkpoint_dir}/.checkpoint.json", cp)
+
+    def validate_checkpoint(self, checkpoint_dir: str,
+                            current_iteration: int | None = None) -> dict | None:
+        """Validate checkpoint, return {completed: [...], remaining: [...]}.
+
+        Returns None if no checkpoint or iteration mismatch (stale).
+        A step is valid only if:
+          1. status == "completed"
+          2. Target file exists
+          3. file mtime >= stage_started_at
+          4. file size matches recorded size and > 0
+        """
+        cp = self.load_checkpoint(checkpoint_dir)
+        if cp is None:
+            return None
+        if current_iteration is not None and cp["iteration"] != current_iteration:
+            return None
+
+        completed = []
+        remaining = []
+        started_at = cp["stage_started_at"]
+
+        for step_id, step in cp["steps"].items():
+            if step["status"] != "completed":
+                remaining.append(step_id)
+                continue
+            file_path = self._check_path(step["file"])
+            if not file_path.exists():
+                remaining.append(step_id)
+                continue
+            stat = file_path.stat()
+            if stat.st_mtime < started_at:
+                remaining.append(step_id)
+                continue
+            if stat.st_size == 0 or stat.st_size != step["file_size"]:
+                remaining.append(step_id)
+                continue
+            completed.append(step_id)
+
+        return {"completed": completed, "remaining": remaining}
+
+    def clear_checkpoint(self, checkpoint_dir: str):
+        path = self._checkpoint_path(checkpoint_dir)
+        if path.exists():
+            path.unlink()
+
+    def has_checkpoint(self, checkpoint_dir: str) -> bool:
+        return self._checkpoint_path(checkpoint_dir).exists()
+
     def get_project_metadata(self) -> dict:
         """Return a summary of the project for status dashboards."""
         status = self.get_status()
