@@ -406,14 +406,39 @@ class FarsOrchestrator:
         to assign GPU subsets to parallel tasks. Otherwise falls back to
         single-agent mode with all GPUs.
 
-        Each task can declare:
-          - gpu_count: how many GPUs it needs (default: config.gpus_per_task)
-          - estimated_minutes: expected runtime (default: 10)
-
-        The action includes estimated_minutes so the executor can set
-        appropriate SSH timeouts and polling intervals.
+        Each task MUST declare:
+          - gpu_count: how many GPUs it needs
+          - estimated_minutes: expected runtime
+        If any task is missing these fields, returns a planner action to fix it.
         """
-        from sibyl.gpu_scheduler import get_batch_info
+        from sibyl.gpu_scheduler import get_batch_info, validate_task_plan
+
+        # Validate task plan completeness before scheduling
+        task_plan_path = self.ws.root / "plan" / "task_plan.json"
+        if task_plan_path.exists():
+            try:
+                plan = json.loads(task_plan_path.read_text(encoding="utf-8"))
+                tasks = plan.get("tasks", [])
+                if tasks:
+                    incomplete = validate_task_plan(tasks)
+                    if incomplete:
+                        ids_str = ", ".join(incomplete[:5])
+                        remaining = len(incomplete) - 5
+                        suffix = f" 等 {len(incomplete)} 个任务" if remaining > 0 else ""
+                        return Action(
+                            action_type="skill",
+                            skills=[{
+                                "name": "sibyl-planner",
+                                "args": f"fix-gpu {ws}",
+                            }],
+                            description=(
+                                f"task_plan.json 中 {ids_str}{suffix} 缺少 gpu_count/estimated_minutes，"
+                                f"需要 planner 补全后才能调度实验"
+                            ),
+                            stage=stage,
+                        )
+            except (json.JSONDecodeError, OSError):
+                pass
 
         info = get_batch_info(
             self.ws.root, self.config.gpu_ids, mode,

@@ -33,9 +33,16 @@ For EACH experiment task, also design a PILOT version:
   {"tasks": [{"id": "task_1", "name": "...", "description": "...",
     "type": "setup|baseline|experiment|ablation|analysis",
     "depends_on": [], "expected_output": "path/to/output",
+    "gpu_count": 1,
+    "estimated_minutes": 30,
     "pilot": {"samples": 16, "seed": 42, "timeout": 600, "pass_criteria": "..."}}]}
   ```
+  **CRITICAL**: Every task MUST include `gpu_count` (number of GPUs needed) and `estimated_minutes` (expected runtime). The GPU scheduler will reject task plans with missing values and block experiment execution.
 - `{workspace}/plan/pilot_plan.json`: Pilot-specific details
+
+### fix-gpu 模式
+当以 `fix-gpu {workspace}` 参数调用时，表示已有的 task_plan.json 缺少 `gpu_count` 或 `estimated_minutes`。
+读取现有 task_plan.json，为每个缺失这两个字段的 task 补全合理值后写回。不要修改其他字段。
 
 ## Tool Usage
 - Use `Read` to read proposal and hypotheses

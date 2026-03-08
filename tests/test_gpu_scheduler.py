@@ -6,7 +6,7 @@ import pytest
 
 from sibyl.gpu_scheduler import (
     topo_sort_layers, assign_gpus, get_next_batch,
-    estimate_batch_minutes, get_batch_info,
+    estimate_batch_minutes, get_batch_info, validate_task_plan,
 )
 
 
@@ -372,3 +372,41 @@ class TestGetBatchInfo:
         assert info is not None
         assert info["batch"] == []
         assert info["remaining_count"] == 2
+
+
+# ══════════════════════════════════════════════
+# Task plan validation
+# ══════════════════════════════════════════════
+
+class TestValidateTaskPlan:
+    def test_complete_tasks(self):
+        tasks = [
+            {"id": "a", "gpu_count": 1, "estimated_minutes": 30},
+            {"id": "b", "gpu_count": 2, "estimated_minutes": 60},
+        ]
+        assert validate_task_plan(tasks) == []
+
+    def test_missing_gpu_count(self):
+        tasks = [
+            {"id": "a", "estimated_minutes": 30},
+            {"id": "b", "gpu_count": 2, "estimated_minutes": 60},
+        ]
+        assert validate_task_plan(tasks) == ["a"]
+
+    def test_missing_estimated_minutes(self):
+        tasks = [
+            {"id": "a", "gpu_count": 1},
+            {"id": "b", "gpu_count": 2},
+        ]
+        assert validate_task_plan(tasks) == ["a", "b"]
+
+    def test_missing_both(self):
+        tasks = [{"id": "a"}, {"id": "b"}]
+        assert validate_task_plan(tasks) == ["a", "b"]
+
+    def test_null_values_detected(self):
+        tasks = [{"id": "a", "gpu_count": None, "estimated_minutes": 30}]
+        assert validate_task_plan(tasks) == ["a"]
+
+    def test_empty_tasks(self):
+        assert validate_task_plan([]) == []

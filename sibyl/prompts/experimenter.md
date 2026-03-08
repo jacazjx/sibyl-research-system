@@ -76,7 +76,7 @@ When invoked with `--tasks=task_1a,task_1b`:
   — use `torch.nn.DataParallel` or `DistributedDataParallel` as appropriate
 
 ### SSH timeout for long-running tasks
-Each task in task_plan.json can declare `estimated_minutes`. Set SSH command
+Each task in task_plan.json declares `estimated_minutes` (required). Set SSH command
 timeout to `estimated_minutes * 2` (with a minimum of 10 minutes) to allow
 for variance. For long training jobs (>30 min), use `nohup` + periodic polling:
 ```bash

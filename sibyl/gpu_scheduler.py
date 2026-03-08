@@ -10,8 +10,8 @@ Task plan format:
             {
                 "id": "train_baseline",
                 "depends_on": [],
-                "gpu_count": 2,           // optional, default 1
-                "estimated_minutes": 60   // optional, default 10
+                "gpu_count": 2,           // REQUIRED
+                "estimated_minutes": 60   // REQUIRED
             },
             ...
         ]
@@ -20,6 +20,24 @@ Task plan format:
 import json
 from collections import deque
 from pathlib import Path
+
+
+# Required fields that planner must provide for each task
+_REQUIRED_TASK_FIELDS = ("gpu_count", "estimated_minutes")
+
+
+def validate_task_plan(tasks: list[dict]) -> list[str]:
+    """Check that all tasks have required GPU scheduling fields.
+
+    Returns list of task IDs missing required fields (empty = all valid).
+    """
+    incomplete = []
+    for t in tasks:
+        for field in _REQUIRED_TASK_FIELDS:
+            if field not in t or t[field] is None:
+                incomplete.append(t["id"])
+                break
+    return incomplete
 
 
 def topo_sort_layers(tasks: list[dict]) -> list[list[dict]]:
@@ -61,8 +79,8 @@ def assign_gpus(ready_tasks: list[dict], gpu_ids: list[int],
                 default_gpus_per_task: int = 1) -> list[dict]:
     """Assign GPU subsets to ready tasks based on per-task gpu_count.
 
-    Each task can declare its own gpu_count in the task dict. Falls back
-    to default_gpus_per_task if not specified.
+    Each task MUST declare gpu_count. Falls back to default_gpus_per_task
+    only for legacy task plans that haven't been updated yet.
 
     Returns list of assignments:
         [{"task_ids": ["task_0a"], "gpu_ids": [0, 1]}, ...]

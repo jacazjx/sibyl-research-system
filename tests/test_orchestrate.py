@@ -705,8 +705,8 @@ class TestExperimentParallel:
         """With task_plan.json, spawns parallel experiment skills."""
         o = make_orchestrator(stage="pilot_experiments")
         tasks = [
-            {"id": "a", "depends_on": []},
-            {"id": "b", "depends_on": []},
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
@@ -720,8 +720,8 @@ class TestExperimentParallel:
         """When tasks remain, stage loops back to itself."""
         o = make_orchestrator(stage="pilot_experiments")
         tasks = [
-            {"id": "a", "depends_on": []},
-            {"id": "b", "depends_on": ["a"]},
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "b", "depends_on": ["a"], "gpu_count": 1, "estimated_minutes": 10},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         # Mark "a" complete
@@ -735,7 +735,7 @@ class TestExperimentParallel:
     def test_experiment_advances_when_all_done(self, make_orchestrator):
         """When all tasks complete, advances to next stage."""
         o = make_orchestrator(stage="pilot_experiments")
-        tasks = [{"id": "a", "depends_on": []}]
+        tasks = [{"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10}]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         o.ws.write_file("exp/gpu_progress.json", json.dumps({
             "completed": ["a"], "failed": []
@@ -747,9 +747,9 @@ class TestExperimentParallel:
         """experiment_cycle also supports parallel scheduling."""
         o = make_orchestrator(stage="experiment_cycle")
         tasks = [
-            {"id": "x", "depends_on": []},
-            {"id": "y", "depends_on": []},
-            {"id": "z", "depends_on": []},
+            {"id": "x", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "y", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "z", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
@@ -759,7 +759,7 @@ class TestExperimentParallel:
     def test_gpu_progress_cleared_on_new_iteration(self, make_orchestrator):
         """gpu_progress.json should be cleared between iterations."""
         o = make_orchestrator(stage="quality_gate", iteration=1)
-        o.ws.write_file("supervisor/review_writing.md", "score: 5.0")
+        o.ws.write_file("supervisor/review_writing.md", "score: 5.0\n")
         o.ws.write_file("exp/gpu_progress.json", json.dumps({
             "completed": ["a"], "failed": []
         }))
@@ -770,7 +770,7 @@ class TestExperimentParallel:
         """Server experiment mode also supports --tasks."""
         o = make_orchestrator(stage="pilot_experiments",
                               experiment_mode="server_codex")
-        tasks = [{"id": "a", "depends_on": []}]
+        tasks = [{"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10}]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
         assert action["skills"][0]["name"] == "sibyl-server-experimenter"
@@ -780,8 +780,8 @@ class TestExperimentParallel:
         """gpus_per_task controls GPU allocation per experiment task."""
         o = make_orchestrator(stage="pilot_experiments", gpus_per_task=2)
         tasks = [
-            {"id": "a", "depends_on": []},
-            {"id": "b", "depends_on": []},
+            {"id": "a", "depends_on": [], "gpu_count": 2, "estimated_minutes": 10},
+            {"id": "b", "depends_on": [], "gpu_count": 2, "estimated_minutes": 10},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
@@ -793,8 +793,8 @@ class TestExperimentParallel:
         """Tasks with per-task gpu_count override the default."""
         o = make_orchestrator(stage="pilot_experiments")
         tasks = [
-            {"id": "a", "depends_on": [], "gpu_count": 2},
-            {"id": "b", "depends_on": [], "gpu_count": 1},
+            {"id": "a", "depends_on": [], "gpu_count": 2, "estimated_minutes": 10},
+            {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
@@ -808,13 +808,27 @@ class TestExperimentParallel:
         """Action should include estimated_minutes from task plan."""
         o = make_orchestrator(stage="pilot_experiments")
         tasks = [
-            {"id": "a", "depends_on": [], "estimated_minutes": 30},
-            {"id": "b", "depends_on": [], "estimated_minutes": 90},
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 30},
+            {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 90},
         ]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
         assert action["estimated_minutes"] == 90  # max of batch
         assert "90min" in action["description"]
+
+    def test_incomplete_task_plan_redirects_to_planner(self, make_orchestrator):
+        """Tasks missing gpu_count/estimated_minutes should trigger planner fix."""
+        o = make_orchestrator(stage="pilot_experiments")
+        tasks = [
+            {"id": "a", "depends_on": []},
+            {"id": "b", "depends_on": [], "gpu_count": 1},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        assert action["action_type"] == "skill"
+        assert action["skills"][0]["name"] == "sibyl-planner"
+        assert "fix-gpu" in action["skills"][0]["args"]
+        assert "gpu_count" in action["description"] or "estimated_minutes" in action["description"]
 
     def test_no_task_plan_zero_estimated_minutes(self, make_orchestrator):
         """Without task_plan, estimated_minutes defaults to 0."""
