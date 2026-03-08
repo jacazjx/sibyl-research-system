@@ -4,39 +4,66 @@ Sibyl relies on [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
 
 ## Overview
 
-| MCP Server | Required | Purpose | Install |
-|------------|----------|---------|---------|
-| [SSH MCP](#ssh-mcp-server) | Yes | Remote GPU execution & file transfer | Claude Code built-in |
-| [arXiv MCP](#arxiv-mcp-server) | Yes | Academic paper search | pip |
-| [Google Scholar MCP](#google-scholar-mcp) | Recommended | Citation & author search | pip |
-| [Codex MCP](#codex-mcp) | Optional | GPT-5.4 cross-review | npm (OpenAI Codex CLI) |
-| [Lark MCP (Official)](#lark-mcp-official) | Optional | Feishu Bitable & messaging | npm |
-| [Feishu MCP (Community)](#feishu-mcp-community) | Optional | Feishu documents & folders | pip/npm |
-| [bioRxiv MCP](#biorxiv-mcp) | Optional | Biology preprint search | pip |
-| [Playwright MCP](#playwright-mcp) | Optional | Web browsing automation | Claude Code plugin |
+| MCP Server | Required | Purpose | Source |
+|------------|----------|---------|--------|
+| [SSH MCP](#ssh-mcp-server) | Yes | Remote GPU execution & file transfer | [classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server) |
+| [arXiv MCP](#arxiv-mcp-server) | Yes | Academic paper search | [blazickjp/arxiv-mcp-server](https://github.com/blazickjp/arxiv-mcp-server) |
+| [Google Scholar MCP](#google-scholar-mcp) | Recommended | Citation & author search | [JackKuo666/Google-Scholar-MCP-Server](https://github.com/JackKuo666/Google-Scholar-MCP-Server) |
+| [Codex MCP](#codex-mcp) | Optional | GPT-5.4 cross-review | [openai/codex](https://github.com/openai/codex) |
+| [Lark MCP (Official)](#lark-mcp-official) | Optional | Feishu Bitable & messaging | [larksuite/lark-openapi-mcp](https://github.com/larksuite/lark-openapi-mcp) |
+| [Feishu MCP (Community)](#feishu-mcp-community) | Optional | Feishu documents & folders | [cso1z/Feishu-MCP](https://github.com/cso1z/Feishu-MCP) |
+| [bioRxiv MCP](#biorxiv-mcp) | Optional | Biology preprint search | [JackKuo666/bioRxiv-MCP-Server](https://github.com/JackKuo666/bioRxiv-MCP-Server) |
+| [Playwright MCP](#playwright-mcp) | Optional | Web browsing automation | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) |
 
 ## SSH MCP Server
 
-**Built into Claude Code** — no separate installation needed.
+> GitHub: [classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server) · npm: [`@fangjunjie/ssh-mcp-server`](https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server)
 
 **Purpose**: Execute commands on remote GPU servers, upload/download files.
 
 **Tools used**: `execute-command`, `upload`, `download`, `list-servers`
 
-**Configuration**: Add your GPU server to `~/.ssh/config`:
+### Install
 
+Requires Node.js 18+:
+
+```bash
+# No global install needed — runs via npx
+npx @fangjunjie/ssh-mcp-server --help
 ```
-Host my-gpu-server
-    HostName 192.168.1.100
-    User your-username
-    IdentityFile ~/.ssh/id_rsa
+
+### Configure (`~/.mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@fangjunjie/ssh-mcp-server",
+               "--host", "192.168.1.100",
+               "--port", "22",
+               "--username", "your-username",
+               "--privateKey", "~/.ssh/id_ed25519"]
+    }
+  }
+}
 ```
 
-Then set `ssh_server: "my-gpu-server"` in your project `config.yaml`.
+> **Important**: The server name **must** be `"ssh-mcp-server"` — Sibyl's agent prompts reference tools as `mcp__ssh-mcp-server__execute-command`. The `--privateKey` path should point to your SSH private key.
 
-See [SSH & GPU Setup](ssh-gpu-setup.md) for detailed server-side configuration.
+Or use `claude mcp add`:
+
+```bash
+claude mcp add ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
+  --host 192.168.1.100 --port 22 --username your-username \
+  --privateKey ~/.ssh/id_ed25519
+```
+
+See [SSH & GPU Setup](ssh-gpu-setup.md) for server-side configuration.
 
 ## arXiv MCP Server
+
+> GitHub: [blazickjp/arxiv-mcp-server](https://github.com/blazickjp/arxiv-mcp-server)
 
 **Purpose**: Search and retrieve academic papers from arXiv.
 
@@ -64,7 +91,11 @@ pip install arxiv-mcp-server
 }
 ```
 
+> **Important**: The server name **must** be `"arxiv-mcp-server"` — Sibyl's agent prompts reference tools as `mcp__arxiv-mcp-server__search_papers`. Using a different name will break tool resolution.
+
 ## Google Scholar MCP
+
+> GitHub: [JackKuo666/Google-Scholar-MCP-Server](https://github.com/JackKuo666/Google-Scholar-MCP-Server)
 
 **Purpose**: Search Google Scholar for papers, get author information.
 
@@ -74,11 +105,11 @@ pip install arxiv-mcp-server
 
 ### Install
 
-Search for available Google Scholar MCP implementations on GitHub/npm. Common options:
-
 ```bash
-# Example (check for latest available package)
-pip install google-scholar-mcp
+# Clone the repository
+git clone https://github.com/JackKuo666/Google-Scholar-MCP-Server.git ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
+cd ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
+pip install -r requirements.txt
 ```
 
 ### Configure (`~/.mcp.json`)
@@ -88,16 +119,18 @@ pip install google-scholar-mcp
   "mcpServers": {
     "google-scholar": {
       "command": "python",
-      "args": ["-m", "google_scholar_mcp"],
+      "args": ["~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py"],
       "env": {}
     }
   }
 }
 ```
 
-> **Note**: Google Scholar MCP availability may vary. If unavailable, the system falls back to arXiv + WebSearch for literature discovery.
+> **Note**: If Google Scholar MCP is unavailable, the system falls back to arXiv + WebSearch for literature discovery.
 
 ## Codex MCP
+
+> GitHub: [openai/codex](https://github.com/openai/codex)
 
 **Purpose**: Independent GPT-5.4 cross-review for idea debate, result analysis, and paper review.
 
@@ -144,6 +177,8 @@ See [Codex Integration](codex-integration.md) for full details.
 
 ## Lark MCP (Official)
 
+> GitHub: [larksuite/lark-openapi-mcp](https://github.com/larksuite/lark-openapi-mcp)
+
 **Purpose**: Feishu/Lark Bitable (multidimensional tables) and instant messaging.
 
 **Tools used**: `bitable_v1_*`, `im_v1_*`
@@ -177,6 +212,8 @@ Requires a Feishu/Lark app with tenant access token. See [Feishu/Lark Setup](fei
 
 ## Feishu MCP (Community)
 
+> GitHub: [cso1z/Feishu-MCP](https://github.com/cso1z/Feishu-MCP)
+
 **Purpose**: Feishu document creation, folder management, native tables.
 
 **Tools used**: `create_feishu_document`, `batch_create_feishu_blocks`, `create_feishu_table`, `create_feishu_folder`, etc.
@@ -185,7 +222,9 @@ Requires a Feishu/Lark app with tenant access token. See [Feishu/Lark Setup](fei
 
 ### Install
 
-Search for `feishu-mcp` on GitHub/npm for available community implementations.
+```bash
+npm install -g feishu-mcp
+```
 
 ### Configure (`~/.mcp.json`)
 
@@ -209,11 +248,19 @@ Requires user OAuth token. See [Feishu/Lark Setup](feishu-lark-setup.md).
 
 ## bioRxiv MCP
 
+> GitHub: [JackKuo666/bioRxiv-MCP-Server](https://github.com/JackKuo666/bioRxiv-MCP-Server)
+
 **Purpose**: Search biological and medical preprints.
 
 **Tools used**: `search_preprints`, `get_preprint`
 
 **Used by**: Innovator, interdisciplinary, and contrarian agents (for cross-domain inspiration)
+
+### Install
+
+```bash
+pip install biorxiv-mcp-server
+```
 
 ### Configure (`~/.mcp.json`)
 
@@ -231,25 +278,52 @@ Requires user OAuth token. See [Feishu/Lark Setup](feishu-lark-setup.md).
 
 ## Playwright MCP
 
+> GitHub: [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)
+
 **Purpose**: Web browsing automation for research (accessing websites, reading documentation).
 
 **Used by**: Literature search (web sources), experiment agents (documentation lookup)
 
 ### Install
 
-Available as a Claude Code plugin. Install via Claude Code settings or:
-
 ```bash
-claude mcp add playwright
+npm install -g @playwright/mcp
 ```
 
-## Minimal `~/.mcp.json` Example
-
-A minimal configuration with only required servers:
+### Configure (`~/.mcp.json`)
 
 ```json
 {
   "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
+    }
+  }
+}
+```
+
+Or install as a Claude Code plugin:
+
+```bash
+claude mcp add playwright -- npx -y @playwright/mcp
+```
+
+## Minimal `~/.mcp.json` Example
+
+A minimal configuration with only the two required servers:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@fangjunjie/ssh-mcp-server",
+               "--host", "192.168.1.100",
+               "--port", "22",
+               "--username", "your-username",
+               "--privateKey", "~/.ssh/id_ed25519"]
+    },
     "arxiv-mcp-server": {
       "command": "python",
       "args": ["-m", "arxiv_mcp_server"]
@@ -258,7 +332,49 @@ A minimal configuration with only required servers:
 }
 ```
 
-SSH MCP is built into Claude Code and does not need an entry in `~/.mcp.json`.
+## Full `~/.mcp.json` Example
+
+All servers configured together:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@fangjunjie/ssh-mcp-server",
+               "--host", "192.168.1.100", "--port", "22",
+               "--username", "your-username",
+               "--privateKey", "~/.ssh/id_ed25519"]
+    },
+    "arxiv-mcp-server": {
+      "command": "python",
+      "args": ["-m", "arxiv_mcp_server"]
+    },
+    "google-scholar": {
+      "command": "python",
+      "args": ["~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py"]
+    },
+    "codex": {
+      "command": "codex",
+      "args": ["mcp-server"],
+      "env": { "OPENAI_API_KEY": "your-key" }
+    },
+    "lark": {
+      "command": "npx",
+      "args": ["-y", "@larksuiteoapi/lark-mcp"],
+      "env": { "LARK_APP_ID": "your-id", "LARK_APP_SECRET": "your-secret" }
+    },
+    "feishu": {
+      "command": "feishu-mcp",
+      "env": { "FEISHU_USER_ACCESS_TOKEN": "your-token" }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
+    }
+  }
+}
+```
 
 ## Adapting MCP Servers
 

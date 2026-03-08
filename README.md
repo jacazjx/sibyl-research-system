@@ -23,6 +23,95 @@ What truly sets Sibyl apart is its **dual-loop architecture**:
 
 ---
 
+## Get Started
+
+### Recommended: Let Claude Configure Everything
+
+The fastest way to set up Sibyl is to let Claude Code do it for you. Clone the repo, open it in Claude Code, and ask:
+
+```bash
+git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+cd sibyl-research-system
+claude --plugin-dir ./plugin
+```
+
+Then tell Claude:
+
+> **"Help me set up Sibyl System. Read docs/setup-guide.md and configure everything."**
+
+Claude will automatically check your environment, install dependencies, configure MCP servers, create config files, and ask you only for what it can't detect (GPU server IP, username, etc.). The [setup guide](docs/setup-guide.md) is a step-by-step checklist designed for Claude to follow.
+
+### Manual Setup
+
+<details>
+<summary>Click to expand manual setup instructions</summary>
+
+#### Prerequisites
+
+- Python 3.12+, Node.js 18+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+- GPU server with SSH access
+- `ANTHROPIC_API_KEY` environment variable
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` environment variable
+
+#### 1. Install
+
+```bash
+git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+cd sibyl-research-system
+chmod +x setup.sh && ./setup.sh    # Interactive: creates venv, installs deps, configures MCP
+```
+
+#### 2. Configure MCP Servers
+
+Two MCP servers are required. `setup.sh` configures them interactively, or add manually to `~/.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@fangjunjie/ssh-mcp-server",
+               "--host", "YOUR_GPU_IP", "--port", "22",
+               "--username", "YOUR_USER",
+               "--privateKey", "~/.ssh/id_ed25519"]
+    },
+    "arxiv-mcp-server": {
+      "command": "python",
+      "args": ["-m", "arxiv_mcp_server"]
+    }
+  }
+}
+```
+
+> Server names must be exact: `"ssh-mcp-server"` and `"arxiv-mcp-server"`.
+
+#### 3. Configure GPU Server
+
+Create `config.yaml` at project root (git-ignored):
+
+```yaml
+ssh_server: "default"
+remote_base: "/home/user/sibyl_system"
+max_gpus: 4
+```
+
+#### 4. Run
+
+```bash
+claude --plugin-dir ./plugin
+
+# Inside Claude Code:
+/sibyl-research:init              # Create a research project
+/sibyl-research:start <project>   # Start autonomous research loop
+```
+
+</details>
+
+> **Docs**: [Full Setup Guide](docs/setup-guide.md) · [Configuration (35+ options)](docs/configuration.md) · [MCP Servers](docs/mcp-servers.md) · [SSH & GPU](docs/ssh-gpu-setup.md) · [All 12 Commands](docs/plugin-commands.md)
+
+---
+
 ## System Overview
 
 Sibyl orchestrates 20+ AI agents through a **19-stage state-machine pipeline**, automatically completing literature survey, idea generation, experiment design & execution, result analysis, paper writing, and peer review. The system supports multi-round iterative optimization with built-in cross-project learning that continuously improves research quality.
@@ -168,6 +257,19 @@ Research Iteration completes
                     └── Ineffective lesson accumulation
 ```
 
+### Why Self-Evolution Actually Works
+
+Most AI systems that claim to "learn" are stateful processes — they accumulate context within a single session, but lose everything when the process restarts. Sibyl takes a fundamentally different approach: **stateless architecture with persistent artifacts**.
+
+- **Every prompt is loaded from disk at call time.** There is no in-memory cache, no long-running daemon. Each agent reads its prompt file (`sibyl/prompts/*.md`) fresh every time it is invoked. If the evolution engine rewrites a prompt, the very next agent call picks up the change — zero restart, zero redeployment.
+- **Every agent runs as an independent subprocess.** Skills execute via `python3 -c "..."` in a fresh process, so Python modules are re-imported every time. Code changes in `sibyl/*.py` take effect immediately on the next stage.
+- **Config is re-parsed per orchestrator call.** `cli_next()` instantiates a new `Orchestrator` each time, re-reading `config.yaml` from disk. Parameter tuning by the evolution engine is picked up on the next tick.
+- **Lesson overlays are plain files.** Experience extracted from past projects is written to `~/.claude/sibyl_evolution/lessons/{agent}.md`. The `load_prompt()` function appends the overlay content on every call — new lessons are injected into the next agent invocation automatically.
+
+This means evolution is not a "batch update" that requires a maintenance window. It is a **continuous, incremental process**: the system that runs iteration N+1 is already different from the one that ran iteration N, because the reflection after iteration N has already modified prompts, overlays, and potentially code on disk. The entire system is designed so that **every file is the source of truth, and every file is read fresh** — making self-evolution a natural consequence of the architecture rather than a bolted-on feature.
+
+**Safety**: All system file modifications are gated by mandatory tests (`.venv/bin/python3 -m pytest tests/`) and tracked via git commits, ensuring every evolution step is reversible and auditable.
+
 **8 Issue Categories**: SYSTEM, EXPERIMENT, WRITING, ANALYSIS, PLANNING, PIPELINE, IDEATION, EFFICIENCY — each automatically routed to the relevant agents. The planner learns to design better experiments, the experimenter learns to use GPUs more efficiently, the writer learns to avoid recurring style issues — all without manual intervention.
 
 ## Project Structure
@@ -209,51 +311,11 @@ workspaces/<project>/
 └── lark_sync/                  # Feishu/Lark sync registry
 ```
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.12+, Node.js 18+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-- GPU server (SSH accessible)
-- `ANTHROPIC_API_KEY` environment variable
-- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` environment variable
-
-### Install & Run
-
-```bash
-git clone https://github.com/Sibyl-Research/sibyl-research-system.git
-cd sibyl-research-system
-chmod +x setup.sh && ./setup.sh
-
-# Load plugin
-claude --plugin-dir ./plugin
-
-# In Claude Code:
-/sibyl-research:init              # Create a research project
-/sibyl-research:start <project>   # Start autonomous loop
-```
-
-See **[Getting Started Guide](docs/getting-started.md)** for the full walkthrough.
-
-### Language
-
-The system defaults to **English** for all agent output, logs, intermediate artifacts, and console messages. To switch to Chinese:
-
-```yaml
-# Per-project: workspaces/<project>/config.yaml
-language: zh
-
-# Or globally: config.yaml (project root, git-ignored)
-language: zh
-```
-
-Root `config.yaml` sets machine-level defaults; project `config.yaml` overrides them. Papers (paper.md, LaTeX) are always in English. See [Configuration](docs/configuration.md) for details.
-
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [Setup Guide](docs/setup-guide.md) | Claude-readable setup checklist (recommended) |
 | [Getting Started](docs/getting-started.md) | Full installation and first-run guide |
 | [Configuration](docs/configuration.md) | All 35+ config options reference |
 | [MCP Servers](docs/mcp-servers.md) | Third-party MCP dependencies & setup |
@@ -269,13 +331,14 @@ Root `config.yaml` sets machine-level defaults; project `config.yaml` overrides 
 
 | Server | Required | Purpose | Source |
 |--------|----------|---------|--------|
-| SSH MCP | Yes | Remote GPU execution | Claude Code built-in |
-| arXiv MCP | Yes | Paper search | `pip install arxiv-mcp-server` |
-| Google Scholar MCP | Recommended | Citation search | Community |
-| Codex MCP | Optional | GPT-5.4 review | [OpenAI Codex CLI](https://github.com/openai/codex) |
-| Lark MCP | Optional | Feishu Bitable/IM | `@larksuiteoapi/lark-mcp` |
-| Feishu MCP | Optional | Feishu documents | Community |
-| bioRxiv MCP | Optional | Biology preprints | Community |
+| [SSH MCP](https://github.com/classfang/ssh-mcp-server) | Yes | Remote GPU execution | `npx @fangjunjie/ssh-mcp-server` |
+| [arXiv MCP](https://github.com/blazickjp/arxiv-mcp-server) | Yes | Paper search | `pip install arxiv-mcp-server` |
+| [Google Scholar MCP](https://github.com/JackKuo666/Google-Scholar-MCP-Server) | Recommended | Citation search | GitHub clone |
+| [Codex MCP](https://github.com/openai/codex) | Optional | GPT-5.4 review | `npm install -g @openai/codex` |
+| [Lark MCP](https://github.com/larksuite/lark-openapi-mcp) | Optional | Feishu Bitable/IM | `npm install -g @larksuiteoapi/lark-mcp` |
+| [Feishu MCP](https://github.com/cso1z/Feishu-MCP) | Optional | Feishu documents | `npm install -g feishu-mcp` |
+| [bioRxiv MCP](https://github.com/JackKuo666/bioRxiv-MCP-Server) | Optional | Biology preprints | `pip install biorxiv-mcp-server` |
+| [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Optional | Web browsing | `npm install -g @playwright/mcp` |
 
 See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and `~/.mcp.json` configuration.
 
