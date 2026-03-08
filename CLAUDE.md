@@ -75,6 +75,16 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 - 纯轻量任务（交叉批评、结果辩论）自动使用 Sonnet
 - Codex 任务使用 `gpt-5.4-high`
 
+## 飞书同步
+
+双 MCP 架构（配置在 `~/.mcp.json`）：
+- **lark** (官方 `@larksuiteoapi/lark-mcp`): tenant token, 用于 Bitable/IM
+- **feishu** (社区 `feishu-mcp`): user OAuth, 用于文件夹/文档/原生表格
+
+**关键规则**: 文档中的表格**必须用 `create_feishu_table` 创建原生表格**，禁止用 code block 渲染。
+
+飞书同步 skill: `.claude/skills/sibyl-lark-sync/SKILL.md`
+
 ## Git 提交规则（强制）
 
 以下情况**必须立即提交 git commit**：
