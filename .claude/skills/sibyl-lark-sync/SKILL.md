@@ -55,6 +55,26 @@ Sibyl-Test-User/ (FNmTflC2blA5OddeZHbc70OXnMc)
 | 论文 | `writing/paper.md` | docx | Markdown 版 |
 | 迭代日志 | `logs/iterations/master_log.jsonl` | bitable 记录 | 追加新行 |
 | 实验数据 | `exp/experiment_db.jsonl` | bitable 记录 | 追加新行 |
+| 系统进化 | `~/.claude/sibyl_evolution/` | docx | outcomes + global lessons |
+
+## 进度追踪
+
+在执行同步前，创建子步骤 Task 追踪进度：
+
+1. 使用 `TaskCreate` 创建同步进度任务：
+   - title: `飞书同步 [{project}]`
+   - 内容 checklist:
+     - [ ] 读取 registry 和项目状态
+     - [ ] 确保文件夹存在
+     - [ ] 同步研究日记
+     - [ ] 同步反思报告
+     - [ ] 同步最终提案
+     - [ ] 同步论文
+     - [ ] 同步实验数据多维表格
+     - [ ] 同步系统进化记录
+     - [ ] 更新 Registry
+     - [ ] 团队通知
+2. 每完成一个 Step，使用 `TaskUpdate` 标记对应条目完成
 
 ## 执行流程
 
@@ -120,7 +140,25 @@ cat {workspace}/lark_sync/registry.json 2>/dev/null || echo "{}"
 
 对比 registry 中的 `last_sync_line`，只写入新增记录。
 
-### Step 5: 更新 Registry
+### Step 5: 同步系统进化记录
+
+读取以下文件（可能不存在，跳过即可）：
+- `~/.claude/sibyl_evolution/outcomes.jsonl` — 跨项目实验结论（每行一个 JSON）
+- `~/.claude/sibyl_evolution/global_lessons.md` — 全局经验总结
+- `~/.claude/sibyl_evolution/digest.json` — 聚合摘要
+- `~/.claude/sibyl_evolution/lessons/*.md` — 各 agent 的经验 overlay
+
+**同步方式**：
+1. 检查 registry 中是否已有进化文档 token
+2. 如果没有，在系统日志文件夹下创建文档：`Sibyl 系统进化记录`
+3. 如果已有，获取现有文档 blocks 确定追加位置
+4. 将以下内容写入文档：
+   - **全局经验** (`global_lessons.md`): 直接转为飞书 blocks
+   - **Outcomes 摘要**: 从 `outcomes.jsonl` 提取最近 N 条，按项目分组写入
+   - **Agent 经验 overlay**: 从 `lessons/*.md` 提取各 agent 的经验教训
+5. 记录 token 到 registry 的 `evolution` 字段
+
+### Step 6: 更新 Registry
 
 将所有飞书资源 token 写入 `{workspace}/lark_sync/registry.json`：
 
@@ -145,12 +183,16 @@ cat {workspace}/lark_sync/registry.json 2>/dev/null || echo "{}"
     "last_experiment_line": 1,
     "last_iteration_line": 1
   },
+  "evolution": {
+    "token": "xxx",
+    "last_outcomes_line": 10
+  },
   "last_sync": "2026-03-09T00:00:00Z",
   "last_iteration": 3
 }
 ```
 
-### Step 6: 团队通知（可选）
+### Step 7: 团队通知（可选）
 
 使用 `mcp__lark__im_v1_message_create` 发送通知。失败则跳过。
 
