@@ -17,87 +17,46 @@ Sibyl 通过 **状态机编排器** 协调 20+ 个 AI Agent，自动完成文献
 
 ## 工作流程
 
-```mermaid
-graph TD
-    subgraph row1[" "]
-        direction LR
-        subgraph iteration["🔄 研究迭代"]
-            direction TB
-            lit["📚 文献调研<br/><sub>arXiv + Web 双源搜索</sub>"]
-            lit --> idea["💡 创意辩论<br/><sub>6 Agent 多视角辩论</sub>"]
-            idea --> plan["📋 实验规划<br/><sub>生成 task_plan.json</sub>"]
-            plan --> pilot["🧪 试点实验<br/><sub>小规模可行性验证</sub>"]
-            pilot --> exp["⚡ 正式实验<br/><sub>GPU 拓扑排序并行调度</sub>"]
-            exp --> result["📊 结果辩论<br/><sub>6 Agent 多视角分析</sub>"]
-            result --> decision{"🔀 实验决策"}
-            decision -- "PIVOT · 换方向" --> idea
-        end
-
-        subgraph writing["✍️ 论文撰写"]
-            direction TB
-            outline["📝 大纲撰写"]
-            outline --> sections["✏️ 章节写作<br/><sub>顺序 / 并行 / Codex</sub>"]
-            sections --> critique["🔍 交叉评审<br/><sub>6 Agent 章节批评</sub>"]
-            critique --> integrate["📖 整合编辑"]
-            integrate --> final{"📋 终审<br/><sub>NeurIPS 级别</sub>"}
-            final -- "不达标 · ≤2轮" --> integrate
-            final -- "达标" --> latex["📄 LaTeX 排版<br/><sub>编译 PDF</sub>"]
-        end
-
-        iteration ~~~ writing
-    end
-
-    subgraph review["🔬 审稿反思"]
-        direction LR
-        rev["👥 综合审稿<br/><sub>Critic + Supervisor + Codex 并行</sub>"] --> reflect["💭 反思总结<br/><sub>分类问题 · 记录教训</sub>"] --> lark["☁️ 飞书同步<br/><sub>云文档归档</sub>"] --> gate{"⭐ 质量门控"}
-    end
-
-    decision -- "PROCEED · 继续" --> outline
-    latex --> rev
-    gate -- "≥8.0 分 & ≥2 轮 ✅" --> done["🎉 研究完成"]
-    gate -- "未达标 · 下一轮迭代" --> lit
-
-    style row1 fill:none,stroke:none
-    style iteration fill:#1a1a2e,stroke:#e94560,color:#fff
-    style writing fill:#16213e,stroke:#0f3460,color:#fff
-    style review fill:#0f3460,stroke:#533483,color:#fff
-    style done fill:#2d6a4f,stroke:#40916c,color:#fff
-    style decision fill:#e94560,stroke:#e94560,color:#fff
-    style final fill:#0f3460,stroke:#e94560,color:#fff
-    style gate fill:#533483,stroke:#533483,color:#fff
 ```
-
-### 多 Agent 协作模式
-
-```mermaid
-graph LR
-    subgraph idea_team["创意生成团队"]
-        direction TB
-        i1["🚀 创新者"]
-        i2["🔧 实用主义者"]
-        i3["📐 理论研究者"]
-        i4["⚔️ 反对者"]
-        i5["🌐 跨学科者"]
-        i6["🔬 实验主义者"]
-    end
-
-    subgraph result_team["结果分析团队"]
-        direction TB
-        r1["😊 乐观分析者"]
-        r2["🤨 怀疑论者"]
-        r3["🎯 战略顾问"]
-        r4["📏 方法论者"]
-        r5["📊 比较分析者"]
-        r6["🔄 修正主义者"]
-    end
-
-    idea_team --> syn1["🧠 综合决策者<br/><i>整合为最终提案</i>"]
-    result_team --> syn2["🧠 结果综合者<br/><i>形成统一判断</i>"]
-
-    style idea_team fill:#1a1a2e,stroke:#e94560,color:#fff
-    style result_team fill:#16213e,stroke:#0f3460,color:#fff
-    style syn1 fill:#2d6a4f,stroke:#40916c,color:#fff
-    style syn2 fill:#2d6a4f,stroke:#40916c,color:#fff
+┌─ 🔄 研究迭代 ──────────────────────┐  ┌─ ✍️ 论文撰写 ──────────────────────┐
+│                                     │  │                                     │
+│  📚 文献调研 (arXiv + Web)          │  │  📝 大纲撰写                        │
+│       │                             │  │       │                             │
+│       ▼                             │  │       ▼                             │
+│  💡 创意辩论 (6 Agent 多视角)       │  │  ✏️ 章节写作 (顺序/并行/Codex)      │
+│       │                             │  │       │                             │
+│       ▼                             │  │       ▼                             │
+│  📋 实验规划 (task_plan.json)       │  │  🔍 交叉评审 (6 Agent 批评)         │
+│       │                             │  │       │                             │
+│       ▼                             │  │       ▼                             │
+│  🧪 试点实验 (小规模验证)           │  │  📖 整合编辑                        │
+│       │                             │  │       │                             │
+│       ▼                             │  │       ▼                             │
+│  ⚡ 正式实验 (GPU 并行调度)         │  │  📋 终审 (NeurIPS 级别)             │
+│       │                             │  │       │ 不达标 ──▶ 回到整合 (≤2轮)  │
+│       ▼                             │  │       ▼                             │
+│  📊 结果辩论 (6 Agent 分析)         │  │  📄 LaTeX 排版 ──▶ 编译 PDF        │
+│       │                             │  │       │                             │
+│       ▼                             │  └───────┼─────────────────────────────┘
+│  🔀 实验决策                        │          │
+│       │ PIVOT ──▶ 回到创意辩论      │          │
+│       │ PROCEED                     │          ▼
+└───────┼─────────────────────────────┘  ┌─ 🔬 审稿反思 ──────────────────────┐
+        │                                │                                     │
+        └──────────▶ 大纲撰写            │  👥 综合审稿 (Critic+Supervisor+Codex)
+                                         │       │                             │
+                                         │       ▼                             │
+                                         │  💭 反思总结 (分类问题·记录教训)    │
+                                         │       │                             │
+                                         │       ▼                             │
+                                         │  ☁️ 飞书同步                        │
+                                         │       │                             │
+                                         │       ▼                             │
+                                         │  ⭐ 质量门控                        │
+                                         │       │ ≥8.0 分 & ≥2 轮 ──▶ ✅ 完成 │
+                                         │       │ 未达标 ──▶ 回到文献调研 🔄   │
+                                         │                                     │
+                                         └─────────────────────────────────────┘
 ```
 
 ### 阶段详解
