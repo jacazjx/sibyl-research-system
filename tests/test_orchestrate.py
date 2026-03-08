@@ -869,7 +869,7 @@ class TestGpuPollingIntegration:
         assert action["gpu_poll"] is not None
         assert action["gpu_poll"]["ssh_connection"] == "default"
         assert "nvidia-smi" in action["gpu_poll"]["query_cmd"]
-        assert action["gpu_poll"]["candidate_gpu_ids"] == [0, 1, 2, 3]
+        assert action["gpu_poll"]["max_gpus"] == 4
         assert "轮询" in action["description"]
         assert action["stage"] == "pilot_experiments"
 
@@ -907,24 +907,26 @@ class TestGpuPollingIntegration:
         finally:
             marker.unlink(missing_ok=True)
 
-    def test_poll_enabled_mismatched_gpus_repolls(self, make_orchestrator):
-        """If polled GPUs don't match config candidates, re-poll."""
+    def test_poll_result_capped_by_max_gpus(self, make_orchestrator):
+        """Free GPUs are capped by max_gpus config."""
         o = make_orchestrator(
             stage="pilot_experiments", gpu_poll_enabled=True,
-            gpu_ids=[0, 1],  # only GPUs 0,1 configured
+            max_gpus=2,
         )
         marker = Path("/tmp/sibyl_gpu_free.json")
-        # Poll found GPUs 4,5 which aren't in our config
-        marker.write_text(json.dumps({"free_gpus": [4, 5], "poll_count": 2}))
+        # Poll found 4 free GPUs but max_gpus=2
+        marker.write_text(json.dumps({"free_gpus": [2, 4, 5, 7], "poll_count": 2}))
         try:
+            # No task plan → single agent fallback, uses first 2 free GPUs
             action = o.get_next_action()
-            assert action["action_type"] == "gpu_poll"
-            assert action["gpu_poll"]["candidate_gpu_ids"] == [0, 1]
+            assert action["action_type"] == "skill"
+            # Should use GPUs 2,4 (first 2 of the free list)
+            assert "2,4" in action["skills"][0]["args"]
         finally:
             marker.unlink(missing_ok=True)
 
-    def test_poll_disabled_uses_config_gpus(self, make_orchestrator):
-        """When gpu_poll_enabled=False, uses config.gpu_ids directly."""
+    def test_poll_disabled_uses_sequential_gpus(self, make_orchestrator):
+        """When gpu_poll_enabled=False, uses GPUs 0..max_gpus-1."""
         o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
         tasks = [
             {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
@@ -932,7 +934,7 @@ class TestGpuPollingIntegration:
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         action = o.get_next_action()
         assert action["action_type"] == "skill"
-        # Default gpu_ids is [0,1,2,3], task gets GPU 0
+        # Default max_gpus=4 → uses GPUs 0,1,2,3 sequentially, task gets GPU 0
         assert "0" in action["skills"][0]["args"]
 
     def test_poll_action_includes_config_params(self, make_orchestrator):
@@ -959,7 +961,7 @@ class TestGpuPollingIntegration:
         assert action["gpu_poll"] is not None
 
     def test_poll_result_empty_free_gpus_repolls(self, make_orchestrator):
-        """If poll result has empty free_gpus list, effective_gpu_ids is empty → re-poll."""
+        """If poll result has empty free_gpus list → re-poll."""
         o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=True)
         marker = Path("/tmp/sibyl_gpu_free.json")
         marker.write_text(json.dumps({"free_gpus": [], "poll_count": 1}))

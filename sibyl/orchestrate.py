@@ -75,7 +75,7 @@ class Action:
     skills: list[dict] | None = None  # for fork skill actions: [{"name": "sibyl-xxx", "args": "..."}]
     team: dict | None = None  # for Agent Teams: {"prompt": "...", "teammates": [{"role": "...", "prompt": "..."}], "require_plan_approval": bool}
     bash_command: str | None = None  # for bash actions
-    gpu_poll: dict | None = None  # for gpu_poll actions: {"ssh_connection", "query_cmd", "candidate_gpu_ids", "threshold_mb", "interval_sec", "marker_file"}
+    gpu_poll: dict | None = None  # for gpu_poll actions: {"ssh_connection", "query_cmd", "max_gpus", "threshold_mb", "interval_sec", "marker_file"}
     description: str = ""
     stage: str = ""
     estimated_minutes: int = 0  # expected runtime hint for experiment batches
@@ -140,7 +140,7 @@ class FarsOrchestrator:
             "config": {
                 "ssh_server": config.ssh_server,
                 "remote_base": config.remote_base,
-                "gpu_ids": config.gpu_ids,
+                "max_gpus": config.max_gpus,
                 "pilot_samples": config.pilot_samples,
                 "pilot_seeds": config.pilot_seeds,
                 "full_seeds": config.full_seeds,
@@ -432,27 +432,22 @@ class FarsOrchestrator:
         that waits for availability without consuming LLM tokens.
         """
         from sibyl.gpu_scheduler import (
-            get_batch_info, validate_task_plan,
-            gpu_poll_wait_script, read_poll_result,
+            get_batch_info, validate_task_plan, read_poll_result,
         )
 
         # --- GPU availability check (shared server) ---
         if self.config.gpu_poll_enabled:
             # Check if a previous poll found free GPUs
             free_gpus = read_poll_result()
-            if free_gpus is not None:
-                # Use polled free GPUs instead of config gpu_ids
-                effective_gpu_ids = [
-                    g for g in free_gpus if g in self.config.gpu_ids
-                ]
-                if not effective_gpu_ids:
-                    # Polled GPUs don't match config → re-poll
-                    return self._gpu_poll_action(stage)
+            if free_gpus is not None and len(free_gpus) > 0:
+                # Use polled free GPUs, capped by max_gpus
+                effective_gpu_ids = free_gpus[:self.config.max_gpus]
             else:
-                # No poll result yet → start polling
+                # No poll result or empty → start polling
                 return self._gpu_poll_action(stage)
         else:
-            effective_gpu_ids = self.config.gpu_ids
+            # No polling: assume GPUs 0..max_gpus-1 are available
+            effective_gpu_ids = list(range(self.config.max_gpus))
 
         # Validate task plan completeness before scheduling
         task_plan_path = self.ws.root / "plan" / "task_plan.json"
@@ -579,20 +574,19 @@ class FarsOrchestrator:
         5. Loop indefinitely (no max attempts) until GPUs become available
         """
         from sibyl.gpu_scheduler import nvidia_smi_query_cmd
-        gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
         interval_min = self.config.gpu_poll_interval_sec // 60
         return Action(
             action_type="gpu_poll",
             gpu_poll={
                 "ssh_connection": "default",
                 "query_cmd": nvidia_smi_query_cmd(),
-                "candidate_gpu_ids": self.config.gpu_ids,
+                "max_gpus": self.config.max_gpus,
                 "threshold_mb": self.config.gpu_free_threshold_mb,
                 "interval_sec": self.config.gpu_poll_interval_sec,
                 "marker_file": "/tmp/sibyl_gpu_free.json",
             },
             description=(
-                f"轮询等待空闲 GPU（候选: [{gpu_ids_str}]，"
+                f"轮询等待空闲 GPU（最多 {self.config.max_gpus} 张，"
                 f"每 {interval_min}min 通过 SSH MCP 检查，无限等待）"
             ),
             stage=stage,
@@ -1074,7 +1068,7 @@ class FarsOrchestrator:
             from sibyl.gpu_scheduler import get_batch_info
             exp_mode = "PILOT" if current_stage == "pilot_experiments" else "FULL"
             info = get_batch_info(
-                self.ws.root, self.config.gpu_ids, exp_mode,
+                self.ws.root, list(range(self.config.max_gpus)), exp_mode,
                 gpus_per_task=self.config.gpus_per_task,
             )
             if info is not None and len(info["batch"]) > 0:
@@ -1383,7 +1377,7 @@ def cli_init_from_spec(spec_path: str, config_path: str | None = None):
         "config": {
             "ssh_server": config.ssh_server,
             "remote_base": config.remote_base,
-            "gpu_ids": config.gpu_ids,
+            "max_gpus": config.max_gpus,
             "pilot_samples": config.pilot_samples,
             "full_seeds": config.full_seeds,
             "lark_enabled": config.lark_enabled,

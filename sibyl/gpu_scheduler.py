@@ -289,20 +289,22 @@ def nvidia_smi_query_cmd() -> str:
 
 def parse_free_gpus(
     nvidia_smi_output: str,
-    candidate_gpu_ids: list[int],
     threshold_mb: int = DEFAULT_FREE_THRESHOLD_MB,
+    max_gpus: int = 0,
 ) -> list[int]:
     """Parse nvidia-smi CSV output and return GPU IDs below memory threshold.
 
+    Scans ALL GPUs on the machine and returns any that are free.
+    Use max_gpus to limit how many GPUs to claim.
+
     Args:
         nvidia_smi_output: Raw output from nvidia_smi_query_cmd()
-        candidate_gpu_ids: GPU IDs we're interested in (from config)
         threshold_mb: Memory usage threshold in MB; GPUs below this are "free"
+        max_gpus: Maximum number of GPUs to return; 0 = no limit
 
     Returns:
-        Sorted list of free GPU IDs (subset of candidate_gpu_ids)
+        Sorted list of free GPU IDs (up to max_gpus)
     """
-    candidates = set(candidate_gpu_ids)
     free = []
     for line in nvidia_smi_output.strip().splitlines():
         line = line.strip()
@@ -317,9 +319,12 @@ def parse_free_gpus(
             mem_used = int(float(parts[1]))
         except (ValueError, IndexError):
             continue
-        if gpu_id in candidates and mem_used < threshold_mb:
+        if mem_used < threshold_mb:
             free.append(gpu_id)
-    return sorted(free)
+    free = sorted(free)
+    if max_gpus > 0:
+        free = free[:max_gpus]
+    return free
 
 
 def gpu_poll_wait_script(

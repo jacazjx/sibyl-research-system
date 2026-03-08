@@ -434,60 +434,78 @@ class TestNvidiaSmiQueryCmd:
 class TestParseFreeGpus:
     def test_basic_parsing(self):
         output = "0, 512\n1, 15234\n2, 128\n3, 22000"
-        free = parse_free_gpus(output, [0, 1, 2, 3], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0, 2]
 
     def test_all_free(self):
         output = "0, 100\n1, 200\n2, 50\n3, 300"
-        free = parse_free_gpus(output, [0, 1, 2, 3], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0, 1, 2, 3]
 
     def test_none_free(self):
         output = "0, 5000\n1, 8000\n2, 12000\n3, 22000"
-        free = parse_free_gpus(output, [0, 1, 2, 3], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == []
 
-    def test_filters_by_candidate_ids(self):
-        """Only returns GPUs that are in the candidate list."""
+    def test_max_gpus_caps_result(self):
+        """max_gpus limits how many free GPUs are returned."""
         output = "0, 100\n1, 200\n2, 100\n3, 100"
-        free = parse_free_gpus(output, [0, 2], threshold_mb=2000)
-        assert free == [0, 2]  # GPU 1 and 3 are free but not candidates
+        free = parse_free_gpus(output, threshold_mb=2000, max_gpus=2)
+        assert free == [0, 1]  # all 4 are free but capped to 2
+
+    def test_max_gpus_zero_no_limit(self):
+        """max_gpus=0 returns all free GPUs."""
+        output = "0, 100\n1, 200\n2, 100\n3, 100\n4, 50\n5, 50"
+        free = parse_free_gpus(output, threshold_mb=2000, max_gpus=0)
+        assert free == [0, 1, 2, 3, 4, 5]
 
     def test_empty_output(self):
-        free = parse_free_gpus("", [0, 1], threshold_mb=2000)
+        free = parse_free_gpus("", threshold_mb=2000)
         assert free == []
 
     def test_whitespace_and_blank_lines(self):
         output = "\n  0, 100  \n\n  1, 5000  \n  "
-        free = parse_free_gpus(output, [0, 1], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0]
 
     def test_threshold_boundary(self):
         """Memory exactly at threshold is NOT free (< not <=)."""
         output = "0, 2000\n1, 1999"
-        free = parse_free_gpus(output, [0, 1], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [1]
 
     def test_malformed_lines_skipped(self):
         output = "garbage line\n0, 100\nbad\n1, 200"
-        free = parse_free_gpus(output, [0, 1], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0, 1]
 
     def test_float_memory_values(self):
         """nvidia-smi might output floats in some locales."""
         output = "0, 512.5\n1, 3000.7"
-        free = parse_free_gpus(output, [0, 1], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0]
 
     def test_sorted_output(self):
         output = "3, 100\n1, 200\n0, 50"
-        free = parse_free_gpus(output, [0, 1, 3], threshold_mb=2000)
+        free = parse_free_gpus(output, threshold_mb=2000)
         assert free == [0, 1, 3]  # sorted
 
     def test_custom_threshold(self):
         output = "0, 500\n1, 7000"
-        free = parse_free_gpus(output, [0, 1], threshold_mb=1000)
+        free = parse_free_gpus(output, threshold_mb=1000)
         assert free == [0]
+
+    def test_8gpu_machine_picks_any_free(self):
+        """On an 8-GPU machine, returns any free GPU regardless of index."""
+        output = "0, 50000\n1, 50000\n2, 100\n3, 50000\n4, 50000\n5, 200\n6, 50000\n7, 300"
+        free = parse_free_gpus(output, threshold_mb=2000)
+        assert free == [2, 5, 7]  # any GPU can be free
+
+    def test_8gpu_capped(self):
+        """On an 8-GPU machine with max_gpus=4, only returns first 4 free."""
+        output = "0, 100\n1, 100\n2, 100\n3, 100\n4, 100\n5, 100\n6, 100\n7, 100"
+        free = parse_free_gpus(output, threshold_mb=2000, max_gpus=4)
+        assert free == [0, 1, 2, 3]
 
 
 # ══════════════════════════════════════════════

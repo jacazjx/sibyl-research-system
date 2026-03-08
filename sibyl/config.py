@@ -23,7 +23,7 @@ class Config:
     review_enabled: bool = True
 
     # GPU scheduling
-    gpu_ids: list[int] = field(default_factory=lambda: [0, 1, 2, 3])
+    max_gpus: int = 4  # max GPUs to use (picks any free ones, not fixed IDs)
     gpus_per_task: int = 1
     ssh_server: str = "cs8000d"
     remote_base: str = "/home/ccwang/sibyl_system"
@@ -96,7 +96,7 @@ class Config:
         # Simple scalar fields
         for key in [
             "max_parallel_tasks", "experiment_timeout", "review_enabled",
-            "ssh_server", "remote_base", "gpus_per_task",
+            "ssh_server", "remote_base", "gpus_per_task", "max_gpus",
             "gpu_poll_enabled", "gpu_free_threshold_mb",
             "gpu_poll_interval_sec", "gpu_poll_max_attempts",
             "pilot_samples", "pilot_timeout",
@@ -109,7 +109,7 @@ class Config:
             if key in data:
                 setattr(cfg, key, data[key])
         # List fields
-        for key in ["gpu_ids", "pilot_seeds", "full_seeds"]:
+        for key in ["pilot_seeds", "full_seeds"]:
             if key in data:
                 setattr(cfg, key, data[key])
         # Dict fields (model routing)
