@@ -27,20 +27,28 @@ PAPER_SECTIONS = [
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
-def load_prompt(agent_name: str) -> str:
-    """Load an agent prompt from the prompts/ directory, with overlay injection."""
+def load_prompt(agent_name: str, overlay_content: str | None = None) -> str:
+    """Load an agent prompt from the prompts/ directory, with overlay injection.
+
+    If overlay_content is provided (e.g. from filter_relevant_lessons),
+    use it instead of the global overlay file.
+    """
     path = PROMPTS_DIR / f"{agent_name}.md"
     if not path.exists():
         return ""
     base = path.read_text(encoding="utf-8")
 
-    # Global overlay (cross-project experience)
-    overlay_path = (
-        Path.home() / ".claude" / "sibyl_evolution" / "lessons" / f"{agent_name}.md"
-    )
-    if overlay_path.exists():
-        overlay = overlay_path.read_text(encoding="utf-8")
-        base += f"\n\n---\n\n{overlay}"
+    if overlay_content is not None:
+        if overlay_content.strip():
+            base += f"\n\n---\n\n{overlay_content}"
+    else:
+        # Global overlay (cross-project experience)
+        overlay_path = (
+            Path.home() / ".claude" / "sibyl_evolution" / "lessons" / f"{agent_name}.md"
+        )
+        if overlay_path.exists():
+            overlay = overlay_path.read_text(encoding="utf-8")
+            base += f"\n\n---\n\n{overlay}"
 
     return base
 
@@ -748,10 +756,12 @@ class FarsOrchestrator:
         # Read reflection agent's structured output
         action_plan_raw = self.ws.read_file("reflection/action_plan.json")
         classified_issues = []
+        success_patterns = []
         if action_plan_raw:
             try:
                 action_plan = json.loads(action_plan_raw)
                 classified_issues = action_plan.get("issues_classified", [])
+                success_patterns = action_plan.get("success_patterns", [])
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -842,6 +852,7 @@ class FarsOrchestrator:
                     score=score,
                     notes=f"Iteration {iteration}",
                     classified_issues=classified_issues[:10],
+                    success_patterns=success_patterns[:10],
                 )
                 engine.generate_lessons_overlay()
         except Exception as e:
@@ -866,6 +877,24 @@ class FarsOrchestrator:
                     self.ws.write_file("logs/quality_trend.md", "\n".join(trend_lines))
         except Exception as e:
             self.ws.add_error(f"Quality trend recording failed: {e}")
+
+        # 5. Self-check diagnostics — auto-evaluate system health
+        try:
+            if self.config.evolution_enabled:
+                engine = EvolutionEngine()
+                diagnostics = engine.get_self_check_diagnostics(project=self.ws.name)
+                if diagnostics:
+                    self.ws.write_file(
+                        "logs/self_check_diagnostics.json",
+                        json.dumps(diagnostics, indent=2, ensure_ascii=False),
+                    )
+                else:
+                    # Clear stale diagnostics if system is healthy
+                    diag_path = self.ws.root / "logs" / "self_check_diagnostics.json"
+                    if diag_path.exists():
+                        diag_path.unlink()
+        except Exception as e:
+            self.ws.add_error(f"Self-check diagnostics failed: {e}")
 
     # ══════════════════════════════════════════════
     # Utilities
@@ -968,14 +997,11 @@ class FarsOrchestrator:
         if current_stage == "quality_gate":
             is_done, qg_score, threshold, max_iters, iteration = self._is_pipeline_done()
             if is_done:
-                # Tag final iteration and trigger cross-project evolution
+                # Tag final iteration (cross-project evolution is manual: sibyl evolve --apply)
                 self.ws.git_tag(
                     f"v{iteration}",
                     f"Iteration {iteration} complete, score={qg_score}",
                 )
-                if self.config.evolution_enabled:
-                    from sibyl.evolution import EvolutionEngine
-                    EvolutionEngine().run_cross_project_evolution()
                 return ("done", None)
             else:
                 # Tag end of iteration, archive artifacts, advance counter

@@ -17,14 +17,19 @@
 7. `{workspace}/reflection/lessons_learned.md` — 上轮教训（跨迭代保留）
 8. `{workspace}/reflection/prev_action_plan.json` — 上轮问题清单（用于对比哪些问题已修复）
 9. `{workspace}/logs/quality_trend.md` — 质量分数趋势（跨迭代）
+10. `{workspace}/logs/self_check_diagnostics.json` — 系统自检结果（如存在，需重点关注）
 
 ## 任务
 
 ### 1. 问题分类
 将发现的所有问题归入以下类别：
 - **SYSTEM**: SSH 失败、超时、格式错误、OOM、GPU 问题
-- **RESEARCH**: 实验设计不足、写作质量差、分析不充分、缺少对比实验
+- **EXPERIMENT**: 实验设计不足、缺少 baseline 对比、缺少 ablation study、未在公认 benchmark 上评估
+- **WRITING**: 论文写作质量、章节一致性、notation 统一
+- **ANALYSIS**: 分析不充分、cherry-pick 结果、缺少对比讨论
+- **PLANNING**: 计划不周、资源估算不准、任务拆分不当
 - **PIPELINE**: 阶段顺序不当、缺少步骤、冗余操作
+- **IDEATION**: 创新性不足、贡献不明确
 
 ### 2. 修复追踪
 对比 `prev_action_plan.json`（上轮问题）和本轮发现的问题：
@@ -37,8 +42,14 @@
 - 质量分数的趋势（读取 `logs/quality_trend.md`，判断上升/下降/停滞）
 - 系统性的弱点
 
-### 3. 改进计划
+### 4. 改进计划
 为每个问题提供具体的、可操作的改进建议。
+
+### 5. 成功模式提取
+识别本轮迭代中做得好的方面（如：实验设计合理、baseline 对比充分、写作清晰），提炼为可复用的成功模式。
+
+### 6. 系统自检响应
+如果 `logs/self_check_diagnostics.json` 存在，必须在反思报告中专门回应其中的诊断结果，并在改进计划中提出针对性措施。
 
 ## 输出文件
 
@@ -48,6 +59,7 @@
 - 各类问题分析
 - 质量趋势判断
 - 根因分析
+- 系统自检响应（如有诊断）
 
 ### `{workspace}/reflection/action_plan.json`
 结构化改进计划：
@@ -63,6 +75,7 @@
     }
   ],
   "issues_fixed": ["上轮已修复的问题描述..."],
+  "success_patterns": ["做得好的具体方面，如：实验包含了完整的 ablation study"],
   "systemic_patterns": ["..."],
   "quality_trajectory": "improving|declining|stagnant",
   "recommended_focus": ["..."],
