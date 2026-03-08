@@ -87,10 +87,13 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 
 ## Git 提交规则（强制）
 
-以下情况**必须立即提交 git commit**：
+以下情况**必须立即提交 git commit 并 push 到 GitHub**：
 1. 修复 bug（系统代码、编排逻辑、prompt 等）
 2. 自我改进（更新记忆、优化 prompt、改进错误处理）
 3. 系统逻辑代码有修改（`sibyl/` 下任何文件、`plugin/` 下的 command）
+4. 新增功能或文件变更（测试、配置、文档等）
 
-提交格式遵循 conventional commits：`fix:`, `feat:`, `refactor:`, `docs:` 等。
+**每次 commit 后必须 `git push`**，确保 GitHub 始终是最新状态。
+
+提交格式遵循 conventional commits：`fix:`, `feat:`, `refactor:`, `docs:`, `test:` 等。
 按功能拆分提交，不要把不相关的改动混在一起。
