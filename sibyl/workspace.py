@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+import dataclasses
 from dataclasses import dataclass, asdict, field
 
 
@@ -13,12 +14,8 @@ class WorkspaceStatus:
     started_at: float = 0.0
     updated_at: float = 0.0
     iteration: int = 0
-    errors: list = None
+    errors: list[dict] = field(default_factory=list)
     paused_at: float = 0.0  # 0 = not paused, >0 = pause timestamp
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
 
 
 class Workspace:
@@ -56,6 +53,9 @@ class Workspace:
         │   ├── paper.md
         │   ├── review.md
         │   └── figures/
+        ├── context/
+        │   └── literature.md
+        ├── codex/
         ├── supervisor/
         ├── critic/
         ├── reflection/
@@ -78,6 +78,7 @@ class Workspace:
             "plan",
             "exp/code", "exp/results/pilots", "exp/results/full", "exp/logs",
             "writing/sections", "writing/critique", "writing/figures", "writing/latex",
+            "context", "codex",
             "supervisor", "critic", "reflection",
             "logs/iterations",
             "lark_sync",
@@ -91,14 +92,24 @@ class Workspace:
 
     def _save_status(self, status: WorkspaceStatus):
         status.updated_at = time.time()
-        with open(self.root / "status.json", "w") as f:
-            json.dump(asdict(status), f, indent=2)
+        tmp = self.root / "status.json.tmp"
+        tmp.write_text(json.dumps(asdict(status), indent=2), encoding="utf-8")
+        tmp.replace(self.root / "status.json")  # atomic on POSIX
 
     def get_status(self) -> WorkspaceStatus:
-        with open(self.root / "status.json") as f:
-            data = json.load(f)
-        # Handle legacy status files missing new fields
-        known = {f.name for f in WorkspaceStatus.__dataclass_fields__.values()}
+        try:
+            data = json.loads((self.root / "status.json").read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            tmp = self.root / "status.json.tmp"
+            if tmp.exists():
+                try:
+                    data = json.loads(tmp.read_text(encoding="utf-8"))
+                    known = {f.name for f in dataclasses.fields(WorkspaceStatus)}
+                    return WorkspaceStatus(**{k: v for k, v in data.items() if k in known})
+                except (json.JSONDecodeError, OSError):
+                    pass
+            return WorkspaceStatus(started_at=time.time())
+        known = {f.name for f in dataclasses.fields(WorkspaceStatus)}
         filtered = {k: v for k, v in data.items() if k in known}
         return WorkspaceStatus(**filtered)
 
@@ -109,6 +120,13 @@ class Workspace:
 
     def update_iteration(self, iteration: int):
         status = self.get_status()
+        status.iteration = iteration
+        self._save_status(status)
+
+    def update_stage_and_iteration(self, stage: str, iteration: int):
+        """Atomically update both stage and iteration in a single write."""
+        status = self.get_status()
+        status.stage = stage
         status.iteration = iteration
         self._save_status(status)
 
@@ -135,24 +153,33 @@ class Workspace:
     def is_paused(self) -> bool:
         return self.get_status().paused_at > 0
 
+    def _check_path(self, rel_path: str) -> Path:
+        """Resolve rel_path under workspace root and guard against traversal."""
+        resolved = (self.root / rel_path).resolve()
+        if not resolved.is_relative_to(self.root.resolve()):
+            raise ValueError(
+                f"Path traversal detected: '{rel_path}' resolves outside workspace"
+            )
+        return resolved
+
     def write_file(self, rel_path: str, content: str):
-        path = self.root / rel_path
+        path = self._check_path(rel_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
     def read_file(self, rel_path: str) -> str | None:
-        path = self.root / rel_path
+        path = self._check_path(rel_path)
         if path.exists():
             return path.read_text(encoding="utf-8")
         return None
 
     def list_files(self, rel_dir: str = "") -> list[str]:
-        target = self.root / rel_dir
+        target = self._check_path(rel_dir) if rel_dir else self.root.resolve()
         if not target.exists():
             return []
         return [
             str(p.relative_to(self.root))
-            for p in target.rglob("*") if p.is_file()
+            for p in target.rglob("*") if p.is_file() and not p.is_symlink()
         ]
 
     def write_json(self, rel_path: str, data: dict | list):
@@ -160,9 +187,12 @@ class Workspace:
 
     def read_json(self, rel_path: str) -> dict | list | None:
         content = self.read_file(rel_path)
-        if content:
+        if content is None:
+            return None
+        try:
             return json.loads(content)
-        return None
+        except json.JSONDecodeError:
+            return None
 
     def archive_iteration(self, iteration: int):
         """Archive current iteration artifacts before starting a new one."""
@@ -186,7 +216,7 @@ class Workspace:
             return
         subprocess.run(["git", "init"], cwd=self.root, capture_output=True)
         gitignore = "*.pyc\n__pycache__/\n.DS_Store\n"
-        (self.root / ".gitignore").write_text(gitignore)
+        (self.root / ".gitignore").write_text(gitignore, encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.root, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "feat: initialize Sibyl research project"],

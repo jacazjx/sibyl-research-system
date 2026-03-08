@@ -14,8 +14,6 @@ from dataclasses import dataclass, asdict
 
 from sibyl.config import Config
 from sibyl.workspace import Workspace
-from sibyl.context_builder import ContextBuilder
-from sibyl.experiment_records import ExperimentDB
 
 PAPER_SECTIONS = [
     ("intro", "Introduction"),
@@ -122,8 +120,6 @@ class FarsOrchestrator:
 
         ws = Workspace(config.workspaces_dir, project_name)
 
-        # Save topic to status
-        status = ws.get_status()
         ws.write_file("topic.txt", topic)
         ws.update_stage("init")
         ws.git_init()
@@ -189,6 +185,14 @@ class FarsOrchestrator:
     def record_result(self, stage: str, result: str = "",
                       score: float | None = None):
         """Record the result of a completed stage and advance state."""
+        if stage == "done":
+            raise ValueError("Cannot record result for terminal stage 'done'")
+        current = self.ws.get_status().stage
+        if stage != current:
+            raise ValueError(
+                f"Stage mismatch: recording '{stage}' but current is '{current}'"
+            )
+
         # Post-reflection hook: process reflection agent outputs
         if stage == "reflection":
             self._post_reflection_hook()
@@ -215,65 +219,60 @@ class FarsOrchestrator:
     def _compute_action(self, stage: str, topic: str, iteration: int) -> Action:
         """Compute the next action based on current stage."""
         ws = self.workspace_path
-        common = load_common_prompt()
-
-        # Inject project-level lessons from previous iterations
-        lessons = self.ws.read_file("reflection/lessons_learned.md")
-        if lessons:
-            common += f"\n\n---\n\n# 上一轮迭代经验教训\n\n{lessons}"
 
         if stage == "init":
-            # init is a transient stage; advance to literature_search
-            self.ws.update_stage("literature_search")
-            return self._action_literature_search(topic, ws, common)
+            # init is a transient stage; _get_next_stage("init") advances to literature_search
+            action = self._action_literature_search(topic, ws)
+            action.stage = "init"  # keep stage matching current state for record_result validation
+            return action
 
         elif stage == "literature_search":
-            return self._action_literature_search(topic, ws, common)
+            return self._action_literature_search(topic, ws)
 
         elif stage == "idea_debate":
-            return self._action_idea_debate(topic, ws, common)
+            return self._action_idea_debate(topic, ws)
 
         elif stage == "planning":
-            return self._action_planning(ws, common)
+            return self._action_planning(ws)
 
         elif stage == "pilot_experiments":
-            return self._action_pilot_experiments(ws, common)
+            return self._action_pilot_experiments(ws)
 
         elif stage == "experiment_cycle":
-            return self._action_experiment_cycle(ws, common, iteration)
+            return self._action_experiment_cycle(ws, iteration)
 
         elif stage == "result_debate":
-            return self._action_result_debate(ws, common)
+            return self._action_result_debate(ws)
 
         elif stage == "experiment_decision":
-            return self._action_experiment_decision(ws, common)
+            return self._action_experiment_decision(ws)
 
         elif stage == "writing_outline":
-            return self._action_writing_outline(ws, common)
+            return self._action_writing_outline(ws)
 
         elif stage == "writing_sections":
-            return self._action_writing_sections(ws, common)
+            return self._action_writing_sections(ws)
 
         elif stage == "writing_critique":
-            return self._action_writing_critique(ws, common)
+            return self._action_writing_critique(ws)
 
         elif stage == "writing_integrate":
-            return self._action_writing_integrate(ws, common)
+            return self._action_writing_integrate(ws)
 
         elif stage == "writing_final_review":
-            return self._action_writing_final_review(ws, common)
+            return self._action_writing_final_review(ws)
 
         elif stage == "writing_latex":
-            return self._action_writing_latex(ws, common)
+            return self._action_writing_latex(ws)
 
         elif stage == "critic_review":
-            return self._action_critic_review(ws, common)
+            return self._action_critic_review(ws)
 
         elif stage == "supervisor_review":
-            return self._action_supervisor_review(ws, common)
+            return self._action_supervisor_review(ws)
 
         elif stage == "reflection":
-            return self._action_reflection(ws)
+            return self._action_reflection(ws, iteration)
 
         elif stage == "lark_sync":
             return self._action_lark_sync(ws)
@@ -291,7 +290,7 @@ class FarsOrchestrator:
     # Action builders
     # ══════════════════════════════════════════════
 
-    def _action_literature_search(self, topic: str, ws: str, common: str) -> Action:
+    def _action_literature_search(self, topic: str, ws: str) -> Action:
         """Single fork skill performs literature search via arXiv + WebSearch."""
         return Action(
             action_type="skill",
@@ -300,7 +299,7 @@ class FarsOrchestrator:
             stage="literature_search",
         )
 
-    def _action_idea_debate(self, topic: str, ws: str, common: str) -> Action:
+    def _action_idea_debate(self, topic: str, ws: str) -> Action:
         """Agent Team: 3 teammates generate, debate, and synthesize research ideas."""
         # Prepare context file for teammates to read
         spec = self.ws.read_file("spec.md") or ""
@@ -334,17 +333,31 @@ class FarsOrchestrator:
             f"After generating ideas, have teammates critique each other's work (score 1-10). "
             f"Write critiques to {ws}/idea/debate/CRITIC_on_AUTHOR.md\n\n"
             f"Finally, synthesize all ideas and critiques into a final proposal at "
-            f"{ws}/idea/final_proposal.md. Pick the strongest idea, incorporating feedback.\n\n"
-            f"All output in Chinese. Use Sonnet for teammates."
+            f"{ws}/idea/proposal.md. Pick the strongest idea, incorporating feedback.\n\n"
         )
+        if self.config.codex_enabled:
+            team_prompt += (
+                f"4. Codex Reviewer (独立第三方): 由 OpenAI Codex 提供独立视角，"
+                f"评审将在团队讨论后自动执行，输出到 {ws}/codex/idea_debate_review.md\n\n"
+            )
+        team_prompt += "All output in Chinese. Use Sonnet for teammates."
+
+        team_dict = {"prompt": team_prompt}
+        if self.config.codex_enabled:
+            team_dict["codex_step"] = {
+                "skill": "sibyl-codex-reviewer",
+                "args": f"idea_debate {ws}",
+            }
+
         return Action(
             action_type="team",
-            team={"prompt": team_prompt},
-            description="Agent Team: 3人辩论生成研究提案（创新者+实用主义者+理论家）",
+            team=team_dict,
+            description="Agent Team: 3人辩论生成研究提案（创新者+实用主义者+理论家）"
+                        + (" + Codex 独立审查" if self.config.codex_enabled else ""),
             stage="idea_debate",
         )
 
-    def _action_planning(self, ws: str, common: str) -> Action:
+    def _action_planning(self, ws: str) -> Action:
         pilot_config = (
             f"samples={self.config.pilot_samples}, "
             f"seeds={self.config.pilot_seeds}, timeout={self.config.pilot_timeout}s"
@@ -356,29 +369,51 @@ class FarsOrchestrator:
             stage="planning",
         )
 
-    def _action_pilot_experiments(self, ws: str, common: str) -> Action:
+    def _action_pilot_experiments(self, ws: str) -> Action:
+        gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
+        if self.config.experiment_mode in ("server_codex", "server_claude"):
+            return Action(
+                action_type="skill",
+                skills=[{
+                    "name": "sibyl-server-experimenter",
+                    "args": f"PILOT {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str} {self.config.experiment_mode} {self.config.server_codex_path} {self.config.server_claude_path}",
+                }],
+                description=f"Run pilot experiments on server ({self.config.experiment_mode})",
+                stage="pilot_experiments",
+            )
         return Action(
             action_type="skill",
             skills=[{
                 "name": "sibyl-experimenter",
-                "args": f"PILOT {ws} {self.config.ssh_server} {self.config.remote_base} {self.config.gpu_ids}",
+                "args": f"PILOT {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str}",
             }],
             description="Run pilot experiments for quick validation",
             stage="pilot_experiments",
         )
 
-    def _action_experiment_cycle(self, ws: str, common: str, iteration: int) -> Action:
+    def _action_experiment_cycle(self, ws: str, iteration: int) -> Action:
+        gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
+        if self.config.experiment_mode in ("server_codex", "server_claude"):
+            return Action(
+                action_type="skill",
+                skills=[{
+                    "name": "sibyl-server-experimenter",
+                    "args": f"FULL {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str} {self.config.experiment_mode} {self.config.server_codex_path} {self.config.server_claude_path}",
+                }],
+                description=f"Run full experiments on server ({self.config.experiment_mode})",
+                stage="experiment_cycle",
+            )
         return Action(
             action_type="skill",
             skills=[{
                 "name": "sibyl-experimenter",
-                "args": f"FULL {ws} {self.config.ssh_server} {self.config.remote_base} {self.config.gpu_ids}",
+                "args": f"FULL {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str}",
             }],
             description="Run full experiments with statistical rigor",
             stage="experiment_cycle",
         )
 
-    def _action_result_debate(self, ws: str, common: str) -> Action:
+    def _action_result_debate(self, ws: str) -> Action:
         team_prompt = (
             f"Create an agent team to debate experiment results.\n\n"
             f"Workspace: {ws}\n"
@@ -389,17 +424,26 @@ class FarsOrchestrator:
             f"3. Strategist: assess strategic implications, suggest next steps\n\n"
             f"Have them debate each other's positions. The skeptic should challenge "
             f"the optimist's claims, the strategist should mediate.\n\n"
-            f"Each teammate writes analysis to {ws}/exp/debate/ROLE.md\n"
+            f"Each teammate writes analysis to {ws}/idea/result_debate/ROLE.md\n"
             f"All output in Chinese."
         )
+
+        team_dict = {"prompt": team_prompt}
+        if self.config.codex_enabled:
+            team_dict["codex_step"] = {
+                "skill": "sibyl-codex-reviewer",
+                "args": f"result_debate {ws}",
+            }
+
         return Action(
             action_type="team",
-            team={"prompt": team_prompt},
-            description="Agent Team: 3人辩论实验结果（乐观者+怀疑论者+战略家）",
+            team=team_dict,
+            description="Agent Team: 3人辩论实验结果（乐观者+怀疑论者+战略家）"
+                        + (" + Codex 独立审查" if self.config.codex_enabled else ""),
             stage="result_debate",
         )
 
-    def _action_experiment_decision(self, ws: str, common: str) -> Action:
+    def _action_experiment_decision(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-supervisor-decision", "args": ws}],
@@ -407,7 +451,7 @@ class FarsOrchestrator:
             stage="experiment_decision",
         )
 
-    def _action_writing_outline(self, ws: str, common: str) -> Action:
+    def _action_writing_outline(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-outline-writer", "args": ws}],
@@ -415,32 +459,48 @@ class FarsOrchestrator:
             stage="writing_outline",
         )
 
-    def _action_writing_sections(self, ws: str, common: str) -> Action:
-        sections_info = "\n".join(
-            f"- {name} (section id: {sid}): write to {ws}/writing/sections/{sid}.md"
-            for sid, name in PAPER_SECTIONS
-        )
-        team_prompt = (
-            f"Create an agent team to write paper sections in parallel.\n\n"
-            f"Workspace: {ws}\n"
-            f"Read outline from {ws}/writing/outline.md\n"
-            f"Read experiment results from {ws}/exp/results/\n\n"
-            f"Spawn 6 teammates, one for each section:\n{sections_info}\n\n"
-            f"Teammates should coordinate for consistency — share key definitions, "
-            f"notation, and cross-references between sections.\n"
-            f"All writing in Chinese."
-        )
-        return Action(
-            action_type="team",
-            team={"prompt": team_prompt},
-            description="Agent Team: 6人并行撰写论文各章节",
-            stage="writing_sections",
-        )
+    def _action_writing_sections(self, ws: str) -> Action:
+        mode = self.config.writing_mode
+        if mode == "sequential":
+            return Action(
+                action_type="skill",
+                skills=[{"name": "sibyl-sequential-writer", "args": ws}],
+                description="顺序撰写论文各章节（确保行文一致性）",
+                stage="writing_sections",
+            )
+        elif mode == "codex":
+            return Action(
+                action_type="skill",
+                skills=[{"name": "sibyl-codex-writer", "args": ws}],
+                description="使用 Codex (GPT-5) 撰写论文各章节",
+                stage="writing_sections",
+            )
+        else:  # "parallel" — 保留现有 team 模式
+            sections_info = "\n".join(
+                f"- {name} (section id: {sid}): write to {ws}/writing/sections/{sid}.md"
+                for sid, name in PAPER_SECTIONS
+            )
+            team_prompt = (
+                f"Create an agent team to write paper sections in parallel.\n\n"
+                f"Workspace: {ws}\n"
+                f"Read outline from {ws}/writing/outline.md\n"
+                f"Read experiment results from {ws}/exp/results/\n\n"
+                f"Spawn 6 teammates, one for each section:\n{sections_info}\n\n"
+                f"Teammates should coordinate for consistency — share key definitions, "
+                f"notation, and cross-references between sections.\n"
+                f"All writing in Chinese."
+            )
+            return Action(
+                action_type="team",
+                team={"prompt": team_prompt},
+                description="Agent Team: 6人并行撰写论文各章节",
+                stage="writing_sections",
+            )
 
-    def _action_writing_critique(self, ws: str, common: str) -> Action:
+    def _action_writing_critique(self, ws: str) -> Action:
         sections_info = "\n".join(
             f"- Critic for {name}: read {ws}/writing/sections/{sid}.md, "
-            f"write critique to {ws}/critic/{sid}_critique.md"
+            f"write critique to {ws}/writing/critique/{sid}_critique.md"
             for sid, name in PAPER_SECTIONS
         )
         team_prompt = (
@@ -458,7 +518,7 @@ class FarsOrchestrator:
             stage="writing_critique",
         )
 
-    def _action_writing_integrate(self, ws: str, common: str) -> Action:
+    def _action_writing_integrate(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-editor", "args": ws}],
@@ -466,7 +526,7 @@ class FarsOrchestrator:
             stage="writing_integrate",
         )
 
-    def _action_writing_final_review(self, ws: str, common: str) -> Action:
+    def _action_writing_final_review(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-final-critic", "args": ws}],
@@ -474,7 +534,7 @@ class FarsOrchestrator:
             stage="writing_final_review",
         )
 
-    def _action_writing_latex(self, ws: str, common: str) -> Action:
+    def _action_writing_latex(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{
@@ -485,7 +545,7 @@ class FarsOrchestrator:
             stage="writing_latex",
         )
 
-    def _action_critic_review(self, ws: str, common: str) -> Action:
+    def _action_critic_review(self, ws: str) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-critic", "args": ws}],
@@ -493,16 +553,18 @@ class FarsOrchestrator:
             stage="critic_review",
         )
 
-    def _action_supervisor_review(self, ws: str, common: str) -> Action:
+    def _action_supervisor_review(self, ws: str) -> Action:
+        skills = [{"name": "sibyl-supervisor", "args": ws}]
+        if self.config.codex_enabled:
+            skills.append({"name": "sibyl-codex-reviewer", "args": f"supervisor_review {ws}"})
         return Action(
-            action_type="skill",
-            skills=[{"name": "sibyl-supervisor", "args": ws}],
-            description="Independent supervisor review with quality scoring",
+            action_type="skills_parallel" if len(skills) > 1 else "skill",
+            skills=skills,
+            description="监督审查" + (" + Codex 独立审查" if self.config.codex_enabled else ""),
             stage="supervisor_review",
         )
 
-    def _action_reflection(self, ws: str) -> Action:
-        iteration = self.ws.get_status().iteration
+    def _action_reflection(self, ws: str, iteration: int) -> Action:
         return Action(
             action_type="skill",
             skills=[{"name": "sibyl-reflection", "args": f"{ws} {iteration}"}],
@@ -518,39 +580,21 @@ class FarsOrchestrator:
             stage="lark_sync",
         )
 
-    def _action_quality_gate(self) -> Action:
-        review = self.ws.read_file("supervisor/review_writing.md") or ""
-        match = re.search(r"(?:score|rating|quality)[:\s]*(\d+(?:\.\d+)?)",
-                          review, re.IGNORECASE)
-        score = float(match.group(1)) if match else 5.0
+    def _is_pipeline_done(self) -> tuple[bool, float, float, int, int]:
+        """Determine if the pipeline should terminate.
+
+        Returns (is_done, score, threshold, max_iters, iteration).
+        """
+        score, threshold, max_iters = self._parse_quality_gate_params()
         iteration = self.ws.get_status().iteration
+        done = (score >= threshold and iteration >= 2) or iteration >= max_iters
+        return done, score, threshold, max_iters, iteration
 
-        # Adaptive thresholds from reflection agent's action plan
-        threshold = 8.0
-        max_iters = 10
-        action_plan_raw = self.ws.read_file("reflection/action_plan.json")
-        if action_plan_raw:
-            try:
-                action_plan = json.loads(action_plan_raw)
-                threshold = action_plan.get("suggested_threshold_adjustment") or threshold
-                max_iters = action_plan.get("suggested_max_iterations") or max_iters
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        is_done = (score >= threshold and iteration >= 2) or iteration >= max_iters
+    def _action_quality_gate(self) -> Action:
+        """Pure computation — no side effects. Side effects in _get_next_stage."""
+        is_done, score, threshold, max_iters, iteration = self._is_pipeline_done()
 
         if is_done:
-            # Tag final iteration
-            self.ws.git_tag(
-                f"v{iteration}",
-                f"Iteration {iteration} complete, score={score}",
-            )
-
-            # Trigger cross-project evolution on completion
-            if self.config.evolution_enabled:
-                from sibyl.evolution import EvolutionEngine
-                EvolutionEngine().run_cross_project_evolution()
-
             return Action(
                 action_type="done",
                 description=(
@@ -560,12 +604,6 @@ class FarsOrchestrator:
                 stage="done",
             )
         else:
-            # Tag end of iteration before starting next
-            self.ws.git_tag(
-                f"iter-{iteration}",
-                f"End of iteration {iteration}, score={score}",
-            )
-            self.ws.update_iteration(iteration + 1)
             return Action(
                 action_type="bash",
                 bash_command=f"echo 'Starting iteration {iteration + 1}'",
@@ -573,7 +611,7 @@ class FarsOrchestrator:
                     f"Quality gate: score={score} < {threshold}, "
                     f"starting iteration {iteration + 1}"
                 ),
-                stage="init",
+                stage="quality_gate",
             )
 
     # ══════════════════════════════════════════════
@@ -590,7 +628,6 @@ class FarsOrchestrator:
 
         # Read reflection agent's structured output
         action_plan_raw = self.ws.read_file("reflection/action_plan.json")
-        action_plan = {}
         classified_issues = []
         if action_plan_raw:
             try:
@@ -622,113 +659,213 @@ class FarsOrchestrator:
         # Extract score
         supervisor_review = self.ws.read_file("supervisor/review_writing.md") or ""
         score = 5.0
-        score_match = re.search(r'(?:score|rating|quality)[:\s]*(\d+(?:\.\d+)?)',
+        score_match = re.search(r'(?:score|rating|quality)[:\s]*(\d+(?:\.\d+)?)(?!\w)',
                                 supervisor_review, re.IGNORECASE)
         if score_match:
-            score = float(score_match.group(1))
+            score = min(max(float(score_match.group(1)), 0.0), 10.0)
 
-        # Log iteration with classified issues
-        logger.log_iteration(
-            iteration=iteration,
-            stage="reflection",
-            changes=[f"Iteration {iteration} complete"],
-            issues_found=issues_found[:10],
-            issues_fixed=[],
-            quality_score=score,
-            notes=json.dumps({"classified_issues": classified_issues[:10]}, ensure_ascii=False),
-        )
-
-        # Research diary
-        critic_feedback = self.ws.read_file("critic/critique_writing.md") or ""
-        reflection_md = self.ws.read_file("reflection/reflection.md") or ""
-        diary_entry = (
-            f"# Iteration {iteration}\n\n"
-            f"**Score**: {score}/10\n"
-            f"**Issues**: {len(issues_found)}\n\n"
-            f"## Reflection\n{reflection_md[:1000]}\n\n"
-            f"## Review Summary\n{supervisor_review[:500]}\n\n"
-            f"## Critique Summary\n{critic_feedback[:500]}\n"
-        )
-        existing_diary = self.ws.read_file("logs/research_diary.md") or ""
-        self.ws.write_file("logs/research_diary.md", existing_diary + "\n\n" + diary_entry)
-
-        # Evolution recording with classification
-        if self.config.evolution_enabled:
-            engine = EvolutionEngine()
-            engine.record_outcome(
-                project=self.ws.name,
-                stage="iteration",
-                issues=issues_found,
-                score=score,
-                notes=f"Iteration {iteration}",
+        # 1. Log iteration with classified issues
+        try:
+            logger.log_iteration(
+                iteration=iteration,
+                stage="reflection",
+                changes=[f"Iteration {iteration} complete"],
+                issues_found=issues_found[:10],
+                issues_fixed=[],
+                quality_score=score,
+                notes=json.dumps({"classified_issues": classified_issues[:10]}, ensure_ascii=False),
             )
-            # Generate per-agent lessons overlay
-            engine.generate_lessons_overlay()
+        except Exception as e:
+            self.ws.add_error(f"Reflection logging failed: {e}")
+
+        # 2. Research diary
+        try:
+            critic_feedback = self.ws.read_file("critic/critique_writing.md") or ""
+            reflection_md = self.ws.read_file("reflection/reflection.md") or ""
+            diary_entry = (
+                f"# Iteration {iteration}\n\n"
+                f"**Score**: {score}/10\n"
+                f"**Issues**: {len(issues_found)}\n\n"
+                f"## Reflection\n{reflection_md[:1000]}\n\n"
+                f"## Review Summary\n{supervisor_review[:500]}\n\n"
+                f"## Critique Summary\n{critic_feedback[:500]}\n"
+            )
+            existing_diary = self.ws.read_file("logs/research_diary.md") or ""
+            self.ws.write_file("logs/research_diary.md", existing_diary + "\n\n" + diary_entry)
+        except Exception as e:
+            self.ws.add_error(f"Diary update failed: {e}")
+
+        # 3. Evolution recording with classification
+        try:
+            if self.config.evolution_enabled:
+                engine = EvolutionEngine()
+                engine.record_outcome(
+                    project=self.ws.name,
+                    stage="reflection",
+                    issues=issues_found,
+                    score=score,
+                    notes=f"Iteration {iteration}",
+                )
+                engine.generate_lessons_overlay()
+        except Exception as e:
+            self.ws.add_error(f"Evolution recording failed: {e}")
 
     # ══════════════════════════════════════════════
     # Utilities
     # ══════════════════════════════════════════════
+
+    def _parse_quality_gate_params(self) -> tuple[float, float, int]:
+        """Parse quality gate parameters from supervisor review and reflection action plan.
+
+        Returns (score, threshold, max_iters).
+        """
+        review = self.ws.read_file("supervisor/review_writing.md") or ""
+        match = re.search(r"(?:score|rating|quality)[:\s]*(\d+(?:\.\d+)?)(?!\w)",
+                          review, re.IGNORECASE)
+        score = min(max(float(match.group(1)), 0.0), 10.0) if match else 5.0
+        threshold = 8.0
+        max_iters = 10
+        action_plan_raw = self.ws.read_file("reflection/action_plan.json")
+        if action_plan_raw:
+            try:
+                action_plan = json.loads(action_plan_raw)
+                v = action_plan.get("suggested_threshold_adjustment")
+                if isinstance(v, (int, float)) and 1.0 <= v <= 10.0:
+                    threshold = float(v)
+                v = action_plan.get("suggested_max_iterations")
+                if isinstance(v, int) and 2 <= v <= 20:
+                    max_iters = v
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return score, threshold, max_iters
 
     def _get_next_stage(self, current_stage: str, result: str = "",
                         score: float | None = None) -> str:
         """Determine the next stage based on current stage and result."""
         # experiment_decision: PIVOT loops back to idea_debate
         if current_stage == "experiment_decision":
-            decision = self.ws.read_file("supervisor/experiment_analysis.md") or ""
+            decision = self.ws.read_file("supervisor/experiment_analysis.md")
+            if decision is None:
+                self.ws.add_error("PIVOT check: supervisor/experiment_analysis.md not found")
+                decision = ""
             if "DECISION: PIVOT" in decision.upper():
                 cycle = self._get_current_cycle()
                 if cycle < self.config.idea_exp_cycles:
+                    iteration = self.ws.get_status().iteration
+                    self.ws.write_file(
+                        f"logs/idea_exp_cycle_{cycle + 1}.marker",
+                        f"PIVOT at iteration {iteration}",
+                    )
                     return "idea_debate"
+                else:
+                    self.ws.add_error(
+                        f"PIVOT requested but cycle limit reached ({cycle}/{self.config.idea_exp_cycles})"
+                    )
 
-        # writing_final_review: low score loops back to writing_integrate
+        # writing_final_review: low score loops back to writing_integrate (with round limit)
         if current_stage == "writing_final_review":
             review = self.ws.read_file("writing/review.md") or ""
-            match = re.search(r"SCORE:\s*(\d+(?:\.\d+)?)", review)
+            match = re.search(r"SCORE:\s*(\d+(?:\.\d+)?)", review, re.IGNORECASE)
             review_score = float(match.group(1)) if match else 5.0
-            if review_score < 7.0:
+            # Count existing revision rounds via orchestrator-managed markers
+            critique_dir = self.ws.root / "writing/critique"
+            if critique_dir.exists():
+                revision_rounds = len([
+                    f for f in critique_dir.iterdir()
+                    if f.is_file() and f.name.startswith("revision_round_")
+                ])
+            else:
+                revision_rounds = 0
+            max_revisions = self.config.writing_revision_rounds
+            if review_score < 7.0 and revision_rounds < max_revisions:
+                self.ws.write_file(
+                    f"writing/critique/revision_round_{revision_rounds + 1}.marker",
+                    f"Revision round {revision_rounds + 1}, score={review_score}",
+                )
                 return "writing_integrate"
+
+        # init is transient: always advance to literature_search
+        if current_stage == "init":
+            return "literature_search"
 
         # lark stages: skip if lark disabled
         if current_stage == "reflection" and not self.config.lark_enabled:
             return "quality_gate"
 
-        # quality_gate: check if new iteration needed (mirrors _action_quality_gate logic)
+        # quality_gate: execute side effects and determine next stage
         if current_stage == "quality_gate":
-            review = self.ws.read_file("supervisor/review_writing.md") or ""
-            match = re.search(r"(?:score|rating|quality)[:\s]*(\d+(?:\.\d+)?)",
-                              review, re.IGNORECASE)
-            qg_score = float(match.group(1)) if match else 5.0
-            iteration = self.ws.get_status().iteration
-            threshold = 8.0
-            max_iters = 10
-            action_plan_raw = self.ws.read_file("reflection/action_plan.json")
-            if action_plan_raw:
+            is_done, qg_score, threshold, max_iters, iteration = self._is_pipeline_done()
+            if is_done:
+                # Tag final iteration and trigger cross-project evolution
+                self.ws.git_tag(
+                    f"v{iteration}",
+                    f"Iteration {iteration} complete, score={qg_score}",
+                )
+                if self.config.evolution_enabled:
+                    from sibyl.evolution import EvolutionEngine
+                    EvolutionEngine().run_cross_project_evolution()
+                return "done"
+            else:
+                # Tag end of iteration, archive artifacts, advance counter
+                self.ws.git_tag(
+                    f"iter-{iteration}",
+                    f"End of iteration {iteration}, score={qg_score}",
+                )
                 try:
-                    action_plan = json.loads(action_plan_raw)
-                    threshold = action_plan.get("suggested_threshold_adjustment") or threshold
-                    max_iters = action_plan.get("suggested_max_iterations") or max_iters
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            is_done = (qg_score >= threshold and iteration >= 2) or iteration >= max_iters
-            if not is_done:
+                    self.ws.archive_iteration(iteration)
+                except OSError as e:
+                    self.ws.add_error(f"Archive failed for iteration {iteration}: {e}")
+                # Clear stale artifacts that would pollute the next iteration
+                self._clear_iteration_artifacts()
+                # Update iteration counter; stage will be set by record_result
+                self.ws.update_iteration(iteration + 1)
                 return "literature_search"  # start new iteration
-            return "done"
 
         try:
             idx = self.STAGES.index(current_stage)
             if idx + 1 < len(self.STAGES):
                 return self.STAGES[idx + 1]
         except ValueError:
-            pass
+            self.ws.add_error(f"Unknown stage '{current_stage}', forcing done")
+            return "done"
         return current_stage
+
+    def _clear_iteration_artifacts(self):
+        """Clear stale working-directory artifacts between iterations.
+
+        Called after archive_iteration to prevent data pollution
+        (e.g., revision markers, supervisor scores) from leaking into the next iteration.
+        """
+        import shutil
+        dirs_to_clear = [
+            "idea/perspectives", "idea/debate", "idea/result_debate",
+            "plan",
+            "writing/sections", "writing/critique",
+            "supervisor", "critic", "reflection",
+        ]
+        for subdir in dirs_to_clear:
+            target = self.ws.root / subdir
+            if target.exists():
+                try:
+                    shutil.rmtree(target)
+                    target.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass  # best-effort cleanup
+        # Clear PIVOT cycle markers (per-iteration budget)
+        logs_dir = self.ws.root / "logs"
+        if logs_dir.exists():
+            for marker in logs_dir.glob("idea_exp_cycle_*.marker"):
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
 
     def _get_current_cycle(self) -> int:
         """Get current idea-experiment cycle number."""
-        cycle = 0
-        for f in sorted(self.ws.list_files("logs")):
-            if "idea_exp_cycle" in f:
-                cycle += 1
-        return cycle
+        logs_dir = self.ws.root / "logs"
+        if not logs_dir.exists():
+            return 0
+        return len(list(logs_dir.glob("idea_exp_cycle_*.marker")))
 
     @staticmethod
     def _slugify(text: str) -> str:
@@ -881,6 +1018,7 @@ def cli_init_from_spec(spec_path: str, config_path: str | None = None):
     ws.write_file("spec.md", spec_content)
     ws.write_file("topic.txt", topic)
     ws.update_stage("init")
+    ws.git_init()
 
     # Extract references if present
     refs_match = re.search(r'##\s*(?:Key References|关键参考文献)\s*\n(.+?)(?:\n##|\Z)', spec_content, re.DOTALL)
@@ -973,6 +1111,9 @@ def cli_migrate_server(project_name: str, ssh_connection: str = "default"):
     Prints the SSH commands needed to reorganize server-side files
     into the v5 project structure. Execute these via SSH MCP.
     """
+    if not re.fullmatch(r'[a-zA-Z0-9_\-]{1,60}', project_name):
+        print(json.dumps({"error": f"Invalid project_name: {project_name!r}"}))
+        return
     config = Config()
     remote_base = config.remote_base
     project_dir = f"{remote_base}/projects/{project_name}"
