@@ -14,7 +14,9 @@
 4. `{workspace}/exp/results/summary.md` — 实验结果摘要
 5. `{workspace}/logs/research_diary.md` — 历史迭代记录
 6. `{workspace}/writing/review.md` — 论文终审
-7. `{workspace}/reflection/lessons_learned.md` — 上轮教训（如有）
+7. `{workspace}/reflection/lessons_learned.md` — 上轮教训（跨迭代保留）
+8. `{workspace}/reflection/prev_action_plan.json` — 上轮问题清单（用于对比哪些问题已修复）
+9. `{workspace}/logs/quality_trend.md` — 质量分数趋势（跨迭代）
 
 ## 任务
 
@@ -24,9 +26,15 @@
 - **RESEARCH**: 实验设计不足、写作质量差、分析不充分、缺少对比实验
 - **PIPELINE**: 阶段顺序不当、缺少步骤、冗余操作
 
-### 2. 模式识别
+### 2. 修复追踪
+对比 `prev_action_plan.json`（上轮问题）和本轮发现的问题：
+- 哪些上轮问题本轮已修复？标记为 **FIXED**
+- 哪些问题反复出现？标记为 **RECURRING**（需要更强的干预）
+- 新发现了哪些问题？标记为 **NEW**
+
+### 3. 模式识别
 - 跨阶段的反复出现的问题
-- 质量分数的趋势（上升/下降/停滞）
+- 质量分数的趋势（读取 `logs/quality_trend.md`，判断上升/下降/停滞）
 - 系统性的弱点
 
 ### 3. 改进计划
@@ -46,8 +54,15 @@
 ```json
 {
   "issues_classified": [
-    {"description": "...", "category": "system|research|pipeline", "severity": "high|medium|low", "suggestion": "..."}
+    {
+      "description": "...",
+      "category": "system|experiment|writing|analysis|planning|pipeline|ideation",
+      "severity": "high|medium|low",
+      "suggestion": "...",
+      "status": "new|recurring|fixed"
+    }
   ],
+  "issues_fixed": ["上轮已修复的问题描述..."],
   "systemic_patterns": ["..."],
   "quality_trajectory": "improving|declining|stagnant",
   "recommended_focus": ["..."],

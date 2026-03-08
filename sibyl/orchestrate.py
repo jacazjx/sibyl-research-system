@@ -339,20 +339,31 @@ class FarsOrchestrator:
             f"Write critiques to {ws}/idea/debate/CRITIC_on_AUTHOR.md\n\n"
             f"Finally, synthesize all ideas and critiques into a final proposal at "
             f"{ws}/idea/proposal.md. Pick the strongest idea, incorporating feedback.\n\n"
+            f"All output in Chinese. Use Sonnet for teammates."
         )
-        if self.config.codex_enabled:
-            team_prompt += (
-                f"4. Codex Reviewer (独立第三方): 由 OpenAI Codex 提供独立视角，"
-                f"评审将在团队讨论后自动执行，输出到 {ws}/codex/idea_debate_review.md\n\n"
-            )
-        team_prompt += "All output in Chinese. Use Sonnet for teammates."
 
-        team_dict = {"prompt": team_prompt}
+        teammates = [
+            {"name": "innovator", "skill": "sibyl-innovator", "args": f"{topic} {ws}"},
+            {"name": "pragmatist", "skill": "sibyl-pragmatist", "args": f"{topic} {ws}"},
+            {"name": "theoretical", "skill": "sibyl-theoretical", "args": f"{topic} {ws}"},
+        ]
+
+        post_steps = [
+            {"type": "skill", "skill": "sibyl-synthesizer", "args": ws},
+        ]
         if self.config.codex_enabled:
-            team_dict["codex_step"] = {
+            post_steps.append({
+                "type": "codex",
                 "skill": "sibyl-codex-reviewer",
                 "args": f"idea_debate {ws}",
-            }
+            })
+
+        team_dict = {
+            "team_name": "sibyl-idea-debate",
+            "teammates": teammates,
+            "post_steps": post_steps,
+            "prompt": team_prompt,
+        }
 
         return Action(
             action_type="team",
@@ -498,12 +509,26 @@ class FarsOrchestrator:
             f"All output in Chinese."
         )
 
-        team_dict = {"prompt": team_prompt}
+        teammates = [
+            {"name": "optimist", "skill": "sibyl-optimist", "args": ws},
+            {"name": "skeptic", "skill": "sibyl-skeptic", "args": ws},
+            {"name": "strategist", "skill": "sibyl-strategist", "args": ws},
+        ]
+
+        post_steps = []
         if self.config.codex_enabled:
-            team_dict["codex_step"] = {
+            post_steps.append({
+                "type": "codex",
                 "skill": "sibyl-codex-reviewer",
                 "args": f"result_debate {ws}",
-            }
+            })
+
+        team_dict = {
+            "team_name": "sibyl-result-debate",
+            "teammates": teammates,
+            "post_steps": post_steps,
+            "prompt": team_prompt,
+        }
 
         return Action(
             action_type="team",
@@ -560,9 +585,23 @@ class FarsOrchestrator:
                 f"notation, and cross-references between sections.\n"
                 f"All writing in Chinese."
             )
+            teammates = [
+                {
+                    "name": f"writer-{sid}",
+                    "skill": "sibyl-section-writer",
+                    "args": f"{ws} {sid} {name}",
+                }
+                for sid, name in PAPER_SECTIONS
+            ]
+            team_dict = {
+                "team_name": "sibyl-writing-sections",
+                "teammates": teammates,
+                "post_steps": [],
+                "prompt": team_prompt,
+            }
             return Action(
                 action_type="team",
-                team={"prompt": team_prompt},
+                team=team_dict,
                 description="Agent Team: 6人并行撰写论文各章节",
                 stage="writing_sections",
             )
@@ -581,9 +620,23 @@ class FarsOrchestrator:
             f"Score each section 1-10 and provide specific improvement suggestions.\n"
             f"All output in Chinese."
         )
+        teammates = [
+            {
+                "name": f"critic-{sid}",
+                "skill": "sibyl-section-critic",
+                "args": f"{ws} {sid} {name}",
+            }
+            for sid, name in PAPER_SECTIONS
+        ]
+        team_dict = {
+            "team_name": "sibyl-writing-critique",
+            "teammates": teammates,
+            "post_steps": [],
+            "prompt": team_prompt,
+        }
         return Action(
             action_type="team",
-            team={"prompt": team_prompt},
+            team=team_dict,
             description="Agent Team: 6人并行批评论文各章节",
             stage="writing_critique",
         )
@@ -722,6 +775,21 @@ class FarsOrchestrator:
 
         issues_found = [ci.get("description", "") for ci in classified_issues]
 
+        # Detect issues_fixed: compare with previous iteration's issues
+        issues_fixed = []
+        try:
+            prev_plan_raw = self.ws.read_file("reflection/prev_action_plan.json")
+            if prev_plan_raw:
+                prev_plan = json.loads(prev_plan_raw)
+                prev_issues = {
+                    i.get("description", "").lower().strip()
+                    for i in prev_plan.get("issues_classified", [])
+                }
+                current_issues = {d.lower().strip() for d in issues_found}
+                issues_fixed = list(prev_issues - current_issues)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
         # Extract score
         supervisor_review = self.ws.read_file("supervisor/review_writing.md") or ""
         score = 5.0
@@ -730,14 +798,14 @@ class FarsOrchestrator:
         if score_match:
             score = min(max(float(score_match.group(1)), 0.0), 10.0)
 
-        # 1. Log iteration with classified issues
+        # 1. Log iteration with classified issues and fixed tracking
         try:
             logger.log_iteration(
                 iteration=iteration,
                 stage="reflection",
                 changes=[f"Iteration {iteration} complete"],
                 issues_found=issues_found[:10],
-                issues_fixed=[],
+                issues_fixed=issues_fixed[:10],
                 quality_score=score,
                 notes=json.dumps({"classified_issues": classified_issues[:10]}, ensure_ascii=False),
             )
@@ -748,10 +816,12 @@ class FarsOrchestrator:
         try:
             critic_feedback = self.ws.read_file("critic/critique_writing.md") or ""
             reflection_md = self.ws.read_file("reflection/reflection.md") or ""
+            fixed_str = f"**Fixed**: {len(issues_fixed)}\n" if issues_fixed else ""
             diary_entry = (
                 f"# Iteration {iteration}\n\n"
                 f"**Score**: {score}/10\n"
-                f"**Issues**: {len(issues_found)}\n\n"
+                f"**Issues**: {len(issues_found)}\n"
+                f"{fixed_str}\n"
                 f"## Reflection\n{reflection_md[:1000]}\n\n"
                 f"## Review Summary\n{supervisor_review[:500]}\n\n"
                 f"## Critique Summary\n{critic_feedback[:500]}\n"
@@ -761,7 +831,7 @@ class FarsOrchestrator:
         except Exception as e:
             self.ws.add_error(f"Diary update failed: {e}")
 
-        # 3. Evolution recording with classification
+        # 3. Evolution recording — pass classified_issues directly for proper agent routing
         try:
             if self.config.evolution_enabled:
                 engine = EvolutionEngine()
@@ -771,10 +841,31 @@ class FarsOrchestrator:
                     issues=issues_found,
                     score=score,
                     notes=f"Iteration {iteration}",
+                    classified_issues=classified_issues[:10],
                 )
                 engine.generate_lessons_overlay()
         except Exception as e:
             self.ws.add_error(f"Evolution recording failed: {e}")
+
+        # 4. Quality trend — write project-level trend for reflection agent
+        try:
+            if self.config.evolution_enabled:
+                engine = EvolutionEngine()
+                trend = engine.get_quality_trend(project=self.ws.name)
+                if trend:
+                    trend_lines = ["# 质量趋势\n"]
+                    for entry in trend[-10:]:  # last 10 entries
+                        trend_lines.append(
+                            f"- {entry['timestamp']}: score={entry['score']}"
+                        )
+                    scores = [e["score"] for e in trend]
+                    if len(scores) >= 2:
+                        delta = scores[-1] - scores[-2]
+                        direction = "上升" if delta > 0 else ("下降" if delta < 0 else "持平")
+                        trend_lines.append(f"\n趋势: {direction} (Δ={delta:+.1f})")
+                    self.ws.write_file("logs/quality_trend.md", "\n".join(trend_lines))
+        except Exception as e:
+            self.ws.add_error(f"Quality trend recording failed: {e}")
 
     # ══════════════════════════════════════════════
     # Utilities
@@ -915,8 +1006,23 @@ class FarsOrchestrator:
 
         Called after archive_iteration to prevent data pollution
         (e.g., revision markers, supervisor scores) from leaking into the next iteration.
+
+        Preserves: reflection/lessons_learned.md (carried forward for next iteration's agents)
         """
         import shutil
+
+        # Preserve lessons_learned.md before clearing reflection/
+        lessons_path = self.ws.root / "reflection" / "lessons_learned.md"
+        lessons_content = None
+        if lessons_path.exists():
+            lessons_content = lessons_path.read_text(encoding="utf-8")
+
+        # Preserve action_plan.json for issues_fixed tracking
+        action_plan_path = self.ws.root / "reflection" / "action_plan.json"
+        action_plan_content = None
+        if action_plan_path.exists():
+            action_plan_content = action_plan_path.read_text(encoding="utf-8")
+
         dirs_to_clear = [
             "idea/perspectives", "idea/debate", "idea/result_debate",
             "plan",
@@ -946,6 +1052,12 @@ class FarsOrchestrator:
                     marker.unlink()
                 except OSError:
                     pass
+
+        # Restore preserved files for next iteration
+        if lessons_content:
+            self.ws.write_file("reflection/lessons_learned.md", lessons_content)
+        if action_plan_content:
+            self.ws.write_file("reflection/prev_action_plan.json", action_plan_content)
 
     def _get_current_cycle(self) -> int:
         """Get current idea-experiment cycle number."""

@@ -262,6 +262,26 @@ class TestIterationBoundary:
         assert (o.ws.root / "reflection").is_dir()
         assert (o.ws.root / "writing/critique").is_dir()
 
+    def test_preserves_lessons_learned(self, make_orchestrator):
+        """lessons_learned.md should survive iteration clearing."""
+        o = make_orchestrator(stage="quality_gate", iteration=1)
+        o.ws.write_file("supervisor/review_writing.md", "score: 5.0")
+        o.ws.write_file("reflection/lessons_learned.md", "# Lessons\n- Fix X")
+        o.record_result("quality_gate")
+        content = o.ws.read_file("reflection/lessons_learned.md")
+        assert content is not None
+        assert "Fix X" in content
+
+    def test_preserves_prev_action_plan(self, make_orchestrator):
+        """action_plan.json should be saved as prev_action_plan.json."""
+        o = make_orchestrator(stage="quality_gate", iteration=1)
+        o.ws.write_file("supervisor/review_writing.md", "score: 5.0")
+        o.ws.write_file("reflection/action_plan.json", '{"issues_classified": []}')
+        o.record_result("quality_gate")
+        content = o.ws.read_file("reflection/prev_action_plan.json")
+        assert content is not None
+        assert "issues_classified" in content
+
 
 # ══════════════════════════════════════════════
 # PIVOT mechanism
@@ -442,12 +462,14 @@ class TestActionGeneration:
     def test_idea_debate_with_codex(self, make_orchestrator):
         o = make_orchestrator(stage="idea_debate", codex_enabled=True)
         action = o.get_next_action()
-        assert "codex_step" in action["team"]
+        codex_steps = [s for s in action["team"]["post_steps"] if s["type"] == "codex"]
+        assert len(codex_steps) == 1
 
     def test_idea_debate_without_codex(self, make_orchestrator):
         o = make_orchestrator(stage="idea_debate", codex_enabled=False)
         action = o.get_next_action()
-        assert "codex_step" not in action["team"]
+        codex_steps = [s for s in action["team"]["post_steps"] if s["type"] == "codex"]
+        assert len(codex_steps) == 0
 
     def test_writing_mode_sequential(self, make_orchestrator):
         o = make_orchestrator(stage="writing_sections", writing_mode="sequential")
@@ -505,6 +527,74 @@ class TestActionGeneration:
         o = make_orchestrator(stage="pilot_experiments", experiment_mode="server_codex")
         action = o.get_next_action()
         assert action["skills"][0]["name"] == "sibyl-server-experimenter"
+
+    def test_idea_debate_team_structure(self, make_orchestrator):
+        """idea_debate returns structured team with 3 teammates + post_steps."""
+        o = make_orchestrator(stage="idea_debate")
+        action = o.get_next_action()
+        team = action["team"]
+        assert team["team_name"] == "sibyl-idea-debate"
+        assert len(team["teammates"]) == 3
+        names = [t["name"] for t in team["teammates"]]
+        assert "innovator" in names
+        assert "pragmatist" in names
+        assert "theoretical" in names
+        for t in team["teammates"]:
+            assert "skill" in t
+            assert "args" in t
+        # synthesizer always in post_steps
+        skill_steps = [s for s in team["post_steps"] if s["type"] == "skill"]
+        assert any(s["skill"] == "sibyl-synthesizer" for s in skill_steps)
+        assert "prompt" in team
+
+    def test_result_debate_team_structure(self, make_orchestrator):
+        """result_debate returns structured team with 3 teammates."""
+        o = make_orchestrator(stage="result_debate")
+        action = o.get_next_action()
+        team = action["team"]
+        assert team["team_name"] == "sibyl-result-debate"
+        assert len(team["teammates"]) == 3
+        names = [t["name"] for t in team["teammates"]]
+        assert "optimist" in names
+        assert "skeptic" in names
+        assert "strategist" in names
+
+    def test_result_debate_codex_step(self, make_orchestrator):
+        """result_debate with codex_enabled includes codex post_step."""
+        o = make_orchestrator(stage="result_debate", codex_enabled=True)
+        action = o.get_next_action()
+        codex_steps = [s for s in action["team"]["post_steps"] if s["type"] == "codex"]
+        assert len(codex_steps) == 1
+        assert codex_steps[0]["skill"] == "sibyl-codex-reviewer"
+
+    def test_result_debate_no_codex(self, make_orchestrator):
+        o = make_orchestrator(stage="result_debate", codex_enabled=False)
+        action = o.get_next_action()
+        assert len(action["team"]["post_steps"]) == 0
+
+    def test_writing_sections_parallel_team_structure(self, make_orchestrator):
+        """writing_sections parallel mode returns 6 section-writer teammates."""
+        o = make_orchestrator(stage="writing_sections", writing_mode="parallel")
+        action = o.get_next_action()
+        team = action["team"]
+        assert team["team_name"] == "sibyl-writing-sections"
+        assert len(team["teammates"]) == 6
+        for t in team["teammates"]:
+            assert t["skill"] == "sibyl-section-writer"
+            assert t["name"].startswith("writer-")
+        assert len(team["post_steps"]) == 0
+
+    def test_writing_critique_team_structure(self, make_orchestrator):
+        """writing_critique returns 6 section-critic teammates."""
+        o = make_orchestrator(stage="writing_critique")
+        action = o.get_next_action()
+        team = action["team"]
+        assert team["team_name"] == "sibyl-writing-critique"
+        assert len(team["teammates"]) == 6
+        for t in team["teammates"]:
+            assert t["skill"] == "sibyl-section-critic"
+            assert t["name"].startswith("critic-")
+        assert len(team["post_steps"]) == 0
 
     def test_all_stages_return_valid_action(self, make_orchestrator):
         """Every stage in STAGES must return a valid action dict."""
