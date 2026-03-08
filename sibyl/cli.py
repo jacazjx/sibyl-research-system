@@ -155,7 +155,7 @@ def _evolve(apply: bool = False, reset: bool = False, show: bool = False):
         color = "red" if i.severity == "high" else "yellow"
         cat = f"[dim]{i.category.upper()}[/dim] " if i.category else ""
         console.print(f"  [{color}]{i.severity.upper()}[/{color}] {cat}{i.pattern}")
-        console.print(f"    Frequency: {i.frequency}x | Stages: {', '.join(i.affected_stages)}")
+        console.print(f"    Frequency: {i.frequency}x | Agents: {', '.join(i.affected_agents)}")
         console.print(f"    Suggestion: {i.suggestion}\n")
 
     if apply:
