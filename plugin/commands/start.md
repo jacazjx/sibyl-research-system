@@ -114,7 +114,12 @@ LOOP:
 
   2. 根据 action_type 执行:
 
-     "skill": 使用 Skill 工具调用对应的 sibyl skill。
+     "skill": 使用 Skill 工具调用对应的 sibyl skill（包括 lark_sync 阶段）。
+     "skills_parallel": 并行调用 action.skills 列表中的所有 skill。
+       使用 Agent 工具并行启动多个 subagent，每个调用对应的 Skill。
+       等待所有 subagent 完成后继续。
+     "agents_parallel": 遗留格式（cross-critique 仍用此方式）。
+       依次执行 action.agents 列表中的各 agent 任务。
      "team": 使用 Agent Team 进行多 agent 协作讨论。
        1. 使用 TeamCreate 创建团队，team_name 为 "sibyl-{stage}"
        2. 读取 action 的 team.prompt
@@ -124,8 +129,9 @@ LOOP:
        6. 等待所有 teammates 完成任务（通过 TaskList 检查）
        7. 使用 SendMessage (type: "shutdown_request") 关闭各 teammate
        8. 收集各 teammate 写入的产出文件
+       9. 如果 action.team 包含 "codex_step"，使用 Skill 工具调用对应的 sibyl-codex-reviewer skill
+       10. 将 Codex 评审结果纳入后续 synthesizer 的输入
      "bash": 执行 bash_command。
-     "lark_sync": 由 sibyl-lark-sync skill 自动执行飞书同步（文档分卷上传、多维表格、通知）。
      "paused": 项目已暂停，每 5 分钟检查一次，最长等待 5 小时。
      "done": 报告完成，输出 <promise>SIBYL_PIPELINE_COMPLETE</promise>。
 

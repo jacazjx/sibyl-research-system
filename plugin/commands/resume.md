@@ -85,6 +85,10 @@ LOOP:
   2. 根据 action_type 执行:
 
      "skill": 使用 Skill 工具调用对应的 sibyl skill。
+     "skills_parallel": 并行调用多个 sibyl skill（如 supervisor + codex-reviewer）。
+       对 skills 列表中的每个 skill，使用 Agent 工具并行启动。
+     "agents_parallel": 并行启动多个 agent（如 cross-critique 的 6 个动态 prompt agent）。
+       对 agents 列表中的每个 agent，使用 Agent 工具并行启动。
      "team": 使用 Agent Team 进行多 agent 协作讨论。
        1. 使用 TeamCreate 创建团队，team_name 为 "sibyl-{stage}"
        2. 读取 action 的 team.prompt
@@ -94,8 +98,8 @@ LOOP:
        6. 等待所有 teammates 完成任务（通过 TaskList 检查）
        7. 使用 SendMessage (type: "shutdown_request") 关闭各 teammate
        8. 收集各 teammate 写入的产出文件
+       9. 如有 codex_step，执行 Codex 独立审查 skill
      "bash": 执行 bash_command。
-     "lark_sync": 由 sibyl-lark-sync skill 自动执行飞书同步。
      "paused": 项目已暂停，每 5 分钟检查一次，最长等待 5 小时。
      "done": 报告完成，输出 <promise>SIBYL_PIPELINE_COMPLETE</promise>。
 
