@@ -20,9 +20,8 @@ Codex 作为不同于 Claude 生态的 AI，能提供差异化的视角和建议
 - `{ws}/idea/result_debate/` 下的辩论记录
 - `{ws}/idea/proposal.md` 原始提案
 
-**supervisor_review 模式：**
+**review 模式：**
 - `{ws}/writing/paper.md` 或 `{ws}/writing/sections/` 下的章节
-- `{ws}/critic/critique_writing.md` 批评意见
 - `{ws}/exp/results/` 实验结果
 - `{ws}/idea/proposal.md` 提案
 

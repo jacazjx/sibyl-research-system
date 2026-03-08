@@ -32,7 +32,7 @@ class TestStageTransitions:
             "pilot_experiments", "experiment_cycle", "result_debate",
             "experiment_decision", "writing_outline", "writing_sections",
             "writing_critique", "writing_integrate", "writing_final_review",
-            "writing_latex", "critic_review", "supervisor_review",
+            "writing_latex", "review",
             "reflection",
         ]
         o = make_orchestrator(stage="literature_search")
@@ -465,11 +465,36 @@ class TestActionGeneration:
         action = o.get_next_action()
         assert action["action_type"] == "team"
 
-    def test_supervisor_review_parallel_with_codex(self, make_orchestrator):
-        o = make_orchestrator(stage="supervisor_review", codex_enabled=True)
+    def test_review_parallel(self, make_orchestrator):
+        o = make_orchestrator(stage="review", codex_enabled=False)
         action = o.get_next_action()
         assert action["action_type"] == "skills_parallel"
-        assert len(action["skills"]) == 2
+        names = [s["name"] for s in action["skills"]]
+        assert "sibyl-critic" in names
+        assert "sibyl-supervisor" in names
+        assert len(names) == 2
+
+    def test_review_parallel_with_codex(self, make_orchestrator):
+        o = make_orchestrator(stage="review", codex_enabled=True)
+        action = o.get_next_action()
+        assert action["action_type"] == "skills_parallel"
+        names = [s["name"] for s in action["skills"]]
+        assert "sibyl-critic" in names
+        assert "sibyl-supervisor" in names
+        assert "sibyl-codex-reviewer" in names
+        assert len(names) == 3
+
+    def test_backward_compat_critic_review(self, make_orchestrator):
+        o = make_orchestrator(stage="critic_review")
+        action = o.get_next_action()
+        assert o.ws.get_status().stage == "review"
+        assert action["action_type"] == "skills_parallel"
+
+    def test_backward_compat_supervisor_review(self, make_orchestrator):
+        o = make_orchestrator(stage="supervisor_review")
+        action = o.get_next_action()
+        assert o.ws.get_status().stage == "review"
+        assert action["action_type"] == "skills_parallel"
 
     def test_experiment_mode_ssh(self, make_orchestrator):
         o = make_orchestrator(stage="pilot_experiments", experiment_mode="ssh_mcp")
@@ -572,3 +597,104 @@ class TestPromptLoading:
     def test_load_common_prompt(self):
         prompt = load_common_prompt()
         assert len(prompt) > 0
+
+
+# ══════════════════════════════════════════════
+# Experiment parallel scheduling
+# ══════════════════════════════════════════════
+
+class TestExperimentParallel:
+    def test_no_task_plan_single_agent(self, make_orchestrator):
+        """Without task_plan.json, falls back to single-agent mode."""
+        o = make_orchestrator(stage="pilot_experiments")
+        action = o.get_next_action()
+        assert action["action_type"] == "skill"
+        assert action["skills"][0]["name"] == "sibyl-experimenter"
+
+    def test_with_task_plan_parallel(self, make_orchestrator):
+        """With task_plan.json, spawns parallel experiment skills."""
+        o = make_orchestrator(stage="pilot_experiments")
+        tasks = [
+            {"id": "a", "depends_on": []},
+            {"id": "b", "depends_on": []},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        assert action["action_type"] == "skills_parallel"
+        assert len(action["skills"]) == 2
+        # Check --tasks arg is present
+        for skill in action["skills"]:
+            assert "--tasks=" in skill["args"]
+
+    def test_experiment_loop_stays_in_stage(self, make_orchestrator):
+        """When tasks remain, stage loops back to itself."""
+        o = make_orchestrator(stage="pilot_experiments")
+        tasks = [
+            {"id": "a", "depends_on": []},
+            {"id": "b", "depends_on": ["a"]},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        # Mark "a" complete
+        o.ws.write_file("exp/gpu_progress.json", json.dumps({
+            "completed": ["a"], "failed": []
+        }))
+        # "b" is now ready, so stage should loop
+        o.record_result("pilot_experiments")
+        assert o.ws.get_status().stage == "pilot_experiments"
+
+    def test_experiment_advances_when_all_done(self, make_orchestrator):
+        """When all tasks complete, advances to next stage."""
+        o = make_orchestrator(stage="pilot_experiments")
+        tasks = [{"id": "a", "depends_on": []}]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        o.ws.write_file("exp/gpu_progress.json", json.dumps({
+            "completed": ["a"], "failed": []
+        }))
+        o.record_result("pilot_experiments")
+        assert o.ws.get_status().stage == "experiment_cycle"
+
+    def test_experiment_cycle_parallel(self, make_orchestrator):
+        """experiment_cycle also supports parallel scheduling."""
+        o = make_orchestrator(stage="experiment_cycle")
+        tasks = [
+            {"id": "x", "depends_on": []},
+            {"id": "y", "depends_on": []},
+            {"id": "z", "depends_on": []},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        assert action["action_type"] == "skills_parallel"
+        assert len(action["skills"]) == 3
+
+    def test_gpu_progress_cleared_on_new_iteration(self, make_orchestrator):
+        """gpu_progress.json should be cleared between iterations."""
+        o = make_orchestrator(stage="quality_gate", iteration=1)
+        o.ws.write_file("supervisor/review_writing.md", "score: 5.0")
+        o.ws.write_file("exp/gpu_progress.json", json.dumps({
+            "completed": ["a"], "failed": []
+        }))
+        o.record_result("quality_gate")
+        assert not (o.ws.root / "exp/gpu_progress.json").exists()
+
+    def test_server_experimenter_with_tasks(self, make_orchestrator):
+        """Server experiment mode also supports --tasks."""
+        o = make_orchestrator(stage="pilot_experiments",
+                              experiment_mode="server_codex")
+        tasks = [{"id": "a", "depends_on": []}]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        assert action["skills"][0]["name"] == "sibyl-server-experimenter"
+        assert "--tasks=a" in action["skills"][0]["args"]
+
+    def test_gpus_per_task_config(self, make_orchestrator):
+        """gpus_per_task controls GPU allocation per experiment task."""
+        o = make_orchestrator(stage="pilot_experiments", gpus_per_task=2)
+        tasks = [
+            {"id": "a", "depends_on": []},
+            {"id": "b", "depends_on": []},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        assert action["action_type"] == "skills_parallel"
+        # With 4 GPUs and 2 per task, should get 2 parallel tasks
+        assert len(action["skills"]) == 2

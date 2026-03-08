@@ -57,6 +57,19 @@ ssh cs8000d "CUDA_VISIBLE_DEVICES={gpu_id} conda run -n sibyl_{project} python /
 - Flag if primary metric improves >30% (suspicious)
 - Save sample output texts, not just statistics
 
+## GPU-Parallel Task Scheduling (--tasks parameter)
+
+When invoked with `--tasks=task_1a,task_1b`:
+- Only execute the specified tasks (not all tasks in task_plan.json)
+- Only use the assigned GPU IDs passed via `CUDA_VISIBLE_DEVICES`
+- After completing all assigned tasks, update `{workspace}/exp/gpu_progress.json`:
+  1. Read existing file (or create `{"completed": [], "failed": []}`)
+  2. Append completed task IDs to `completed` array
+  3. Append failed task IDs to `failed` array
+  4. Write back atomically (read → modify → write)
+
+When `--tasks` is NOT present, execute all tasks in task_plan.json (legacy behavior).
+
 ## Tool Usage
 - Use `mcp__ssh-mcp-server__execute-command` for remote execution
 - Use `mcp__ssh-mcp-server__upload` to transfer scripts

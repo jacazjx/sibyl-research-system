@@ -93,8 +93,7 @@ class FarsOrchestrator:
         "writing_integrate",
         "writing_final_review",
         "writing_latex",
-        "critic_review",
-        "supervisor_review",
+        "review",
         "reflection",
         "lark_sync",
         "quality_gate",
@@ -223,6 +222,11 @@ class FarsOrchestrator:
         """Compute the next action based on current stage."""
         ws = self.workspace_path
 
+        # Backward compat: migrate old stage names
+        if stage in ("critic_review", "supervisor_review"):
+            stage = "review"
+            self.ws.update_stage("review")
+
         if stage == "init":
             # init is a transient stage; _get_next_stage("init") advances to literature_search
             action = self._action_literature_search(topic, ws)
@@ -268,11 +272,8 @@ class FarsOrchestrator:
         elif stage == "writing_latex":
             return self._action_writing_latex(ws)
 
-        elif stage == "critic_review":
-            return self._action_critic_review(ws)
-
-        elif stage == "supervisor_review":
-            return self._action_supervisor_review(ws)
+        elif stage == "review":
+            return self._action_review(ws)
 
         elif stage == "reflection":
             return self._action_reflection(ws, iteration)
@@ -373,47 +374,95 @@ class FarsOrchestrator:
         )
 
     def _action_pilot_experiments(self, ws: str) -> Action:
-        gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
-        if self.config.experiment_mode in ("server_codex", "server_claude"):
-            return Action(
-                action_type="skill",
-                skills=[{
-                    "name": "sibyl-server-experimenter",
-                    "args": f"PILOT {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str} {self.config.experiment_mode} {self.config.server_codex_path} {self.config.server_claude_path}",
-                }],
-                description=f"Run pilot experiments on server ({self.config.experiment_mode})",
-                stage="pilot_experiments",
-            )
-        return Action(
-            action_type="skill",
-            skills=[{
-                "name": "sibyl-experimenter",
-                "args": f"PILOT {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str}",
-            }],
-            description="Run pilot experiments for quick validation",
-            stage="pilot_experiments",
-        )
+        return self._action_experiment_batch(ws, "PILOT", "pilot_experiments")
 
     def _action_experiment_cycle(self, ws: str, iteration: int) -> Action:
-        gpu_ids_str = ",".join(str(g) for g in self.config.gpu_ids)
-        if self.config.experiment_mode in ("server_codex", "server_claude"):
+        return self._action_experiment_batch(ws, "FULL", "experiment_cycle")
+
+    def _action_experiment_batch(self, ws: str, mode: str, stage: str) -> Action:
+        """Build experiment action with GPU-aware batch scheduling.
+
+        If task_plan.json exists and has a tasks array, uses gpu_scheduler
+        to assign GPU subsets to parallel tasks. Otherwise falls back to
+        single-agent mode with all GPUs.
+        """
+        from sibyl.gpu_scheduler import get_next_batch
+
+        batch = get_next_batch(
+            self.ws.root, self.config.gpu_ids, mode,
+            gpus_per_task=self.config.gpus_per_task,
+        )
+
+        # No task_plan or all tasks complete → single-agent fallback
+        if batch is None:
+            return self._experiment_skill(mode, ws, self.config.gpu_ids, stage)
+
+        # All tasks blocked by deps (shouldn't happen with valid DAG)
+        if len(batch) == 0:
+            return Action(
+                action_type="bash",
+                bash_command=f'echo "All experiment tasks blocked by dependencies"',
+                description="实验任务被依赖阻塞",
+                stage=stage,
+            )
+
+        # Build parallel skills, one per GPU assignment
+        skills = []
+        for assignment in batch:
+            task_ids = ",".join(assignment["task_ids"])
+            gpu_ids = assignment["gpu_ids"]
+            skills.append(
+                self._experiment_skill_dict(mode, ws, gpu_ids, task_ids)
+            )
+
+        if len(skills) == 1:
             return Action(
                 action_type="skill",
-                skills=[{
-                    "name": "sibyl-server-experimenter",
-                    "args": f"FULL {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str} {self.config.experiment_mode} {self.config.server_codex_path} {self.config.server_claude_path}",
-                }],
-                description=f"Run full experiments on server ({self.config.experiment_mode})",
-                stage="experiment_cycle",
+                skills=skills,
+                description=f"执行实验批次 ({mode}): {skills[0].get('args', '')[:60]}",
+                stage=stage,
             )
         return Action(
+            action_type="skills_parallel",
+            skills=skills,
+            description=f"并行执行 {len(skills)} 个实验任务 ({mode})",
+            stage=stage,
+        )
+
+    def _experiment_skill_dict(self, mode: str, ws: str, gpu_ids: list[int],
+                                task_ids: str = "") -> dict:
+        """Build a single experimenter skill dict."""
+        gpu_ids_str = ",".join(str(g) for g in gpu_ids)
+        tasks_arg = f" --tasks={task_ids}" if task_ids else ""
+        if self.config.experiment_mode in ("server_codex", "server_claude"):
+            return {
+                "name": "sibyl-server-experimenter",
+                "args": (
+                    f"{mode} {ws} {self.config.ssh_server} "
+                    f"{self.config.remote_base} {gpu_ids_str} "
+                    f"{self.config.experiment_mode} "
+                    f"{self.config.server_codex_path} "
+                    f"{self.config.server_claude_path}{tasks_arg}"
+                ),
+            }
+        return {
+            "name": "sibyl-experimenter",
+            "args": f"{mode} {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str}{tasks_arg}",
+        }
+
+    def _experiment_skill(self, mode: str, ws: str, gpu_ids: list[int],
+                          stage: str) -> Action:
+        """Single-agent experiment action (fallback when no task_plan)."""
+        skill = self._experiment_skill_dict(mode, ws, gpu_ids)
+        is_server = self.config.experiment_mode in ("server_codex", "server_claude")
+        return Action(
             action_type="skill",
-            skills=[{
-                "name": "sibyl-experimenter",
-                "args": f"FULL {ws} {self.config.ssh_server} {self.config.remote_base} {gpu_ids_str}",
-            }],
-            description="Run full experiments with statistical rigor",
-            stage="experiment_cycle",
+            skills=[skill],
+            description=(
+                f"Run {mode.lower()} experiments"
+                + (f" on server ({self.config.experiment_mode})" if is_server else "")
+            ),
+            stage=stage,
         )
 
     def _action_result_debate(self, ws: str) -> Action:
@@ -548,23 +597,19 @@ class FarsOrchestrator:
             stage="writing_latex",
         )
 
-    def _action_critic_review(self, ws: str) -> Action:
-        return Action(
-            action_type="skill",
-            skills=[{"name": "sibyl-critic", "args": ws}],
-            description="Harsh but fair academic critique of all outputs",
-            stage="critic_review",
-        )
-
-    def _action_supervisor_review(self, ws: str) -> Action:
-        skills = [{"name": "sibyl-supervisor", "args": ws}]
+    def _action_review(self, ws: str) -> Action:
+        """Parallel review: critic + supervisor + optional codex."""
+        skills = [
+            {"name": "sibyl-critic", "args": ws},
+            {"name": "sibyl-supervisor", "args": ws},
+        ]
         if self.config.codex_enabled:
-            skills.append({"name": "sibyl-codex-reviewer", "args": f"supervisor_review {ws}"})
+            skills.append({"name": "sibyl-codex-reviewer", "args": f"review {ws}"})
         return Action(
-            action_type="skills_parallel" if len(skills) > 1 else "skill",
+            action_type="skills_parallel",
             skills=skills,
-            description="监督审查" + (" + Codex 独立审查" if self.config.codex_enabled else ""),
-            stage="supervisor_review",
+            description="并行审查：批评 + 监督" + (" + Codex" if self.config.codex_enabled else ""),
+            stage="review",
         )
 
     def _action_reflection(self, ws: str, iteration: int) -> Action:
@@ -769,6 +814,17 @@ class FarsOrchestrator:
                         f"PIVOT requested but cycle limit reached ({cycle}/{self.config.idea_exp_cycles})"
                     )
 
+        # experiment stages: loop if more batches remain
+        if current_stage in ("pilot_experiments", "experiment_cycle"):
+            from sibyl.gpu_scheduler import get_next_batch
+            exp_mode = "PILOT" if current_stage == "pilot_experiments" else "FULL"
+            batch = get_next_batch(
+                self.ws.root, self.config.gpu_ids, exp_mode,
+                gpus_per_task=self.config.gpus_per_task,
+            )
+            if batch is not None and len(batch) > 0:
+                return (current_stage, None)  # stay in current stage for next batch
+
         # writing_final_review: low score loops back to writing_integrate (with round limit)
         if current_stage == "writing_final_review":
             review = self.ws.read_file("writing/review.md") or ""
@@ -857,6 +913,13 @@ class FarsOrchestrator:
                     target.mkdir(parents=True, exist_ok=True)
                 except OSError:
                     pass  # best-effort cleanup
+        # Clear GPU progress tracking
+        gpu_progress = self.ws.root / "exp" / "gpu_progress.json"
+        if gpu_progress.exists():
+            try:
+                gpu_progress.unlink()
+            except OSError:
+                pass
         # Clear PIVOT cycle markers (per-iteration budget)
         logs_dir = self.ws.root / "logs"
         if logs_dir.exists():

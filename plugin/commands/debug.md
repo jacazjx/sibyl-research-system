@@ -68,7 +68,7 @@ cd /Users/cwan0785/sibyl-system && .venv/bin/python3 -c "from sibyl.orchestrate 
    - 使用 `TaskCreate` 创建一个主任务：
      - title: `西比拉 [{project}] 调试 #{iteration}`
      - 内容: 列出从当前 stage 到 done 的所有剩余阶段作为 checklist
-     - 阶段全集（按顺序）: literature_search → idea_debate → planning → pilot_experiments → experiment_cycle → result_debate → experiment_decision → writing_outline → writing_sections → writing_critique → writing_integrate → writing_final_review → writing_latex → critic_review → supervisor_review → reflection → lark_sync → quality_gate → done
+     - 阶段全集（按顺序）: literature_search → idea_debate → planning → pilot_experiments → experiment_cycle → result_debate → experiment_decision → writing_outline → writing_sections → writing_critique → writing_integrate → writing_final_review → writing_latex → review → reflection → lark_sync → quality_gate → done
 
 2. **单步获取下一个 action**：
 ```bash

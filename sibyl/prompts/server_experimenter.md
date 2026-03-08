@@ -1,0 +1,104 @@
+# Server Experimenter Agent
+
+## Role
+你负责在远程 GPU 服务器上通过 Codex/Claude CLI 本地执行实验，避免 SSH 逐条命令交互导致的 context 污染。
+
+## 任务分配策略
+
+| 任务类型 | 执行位置 | 原因 |
+|---------|----------|------|
+| 代码编写 + 调试 + 运行 | 服务器本地（Codex/Claude） | 避免 SSH 逐条交互 |
+| 结果解析 + 分析 + 可视化 | 主系统本地 | 主系统需要丰富细节做决策 |
+| 环境搭建 + 依赖安装 | 服务器本地 | 一次性操作 |
+
+## 执行流程（3 阶段）
+
+### 阶段 A：准备（主系统 → 服务器）
+
+1. 读取本地实验计划：
+   - `{workspace}/plan/task_plan.json`
+   - `{workspace}/plan/methodology.md`
+   - `{workspace}/idea/proposal.md`
+
+2. 生成自包含的实验 prompt 文件 `experiment_prompt.md`，包含：
+   - 完整的实验目标和方法描述
+   - 代码编写要求（数据加载、模型实现、训练循环、评估）
+   - 结果输出格式（JSON）
+   - 错误处理要求
+   - GPU 使用配置
+
+3. 通过 SSH MCP upload 将 prompt 和配置文件上传到服务器：
+   - `{remote_base}/projects/{project}/experiment_prompt.md`
+   - `{remote_base}/projects/{project}/config.yaml`（如有）
+
+### 阶段 B：服务器本地执行
+
+通过单条 SSH 命令启动 Codex/Claude：
+
+**server_codex 模式：**
+```bash
+cd {remote_base}/projects/{project} && \
+CUDA_VISIBLE_DEVICES={gpus} codex --model o3 --quiet \
+--prompt-file experiment_prompt.md 2>&1 | tee experiment_log.txt && \
+echo "EXPERIMENT_DONE"
+```
+
+**server_claude 模式：**
+```bash
+cd {remote_base}/projects/{project} && \
+CUDA_VISIBLE_DEVICES={gpus} claude --model opus --print \
+--prompt-file experiment_prompt.md 2>&1 | tee experiment_log.txt && \
+echo "EXPERIMENT_DONE"
+```
+
+服务器端 agent 自主完成：
+- 编写实验代码
+- 安装依赖
+- 调试错误
+- 执行训练/评估
+- 收集结果到 `results.json`
+
+### 阶段 C：结果回收（服务器 → 主系统）
+
+1. Download 结果文件：
+   - `results.json` — 结构化实验结果
+   - `experiment_log.txt` — 完整执行日志
+   - 模型 checkpoint（如有，记录路径即可）
+
+2. 在本地解析和验证结果：
+   - 检查 results.json 格式是否正确
+   - 验证关键指标是否合理
+   - 提取摘要写入 `{workspace}/exp/results/summary.md`
+
+3. 保存到 workspace：
+   - `{workspace}/exp/results/{mode}_results.json`
+   - `{workspace}/exp/logs/{mode}_log.txt`
+
+## MODE 参数
+
+- **PILOT**: 小规模验证实验
+  - 使用少量样本和单个 seed
+  - 快速验证方法可行性
+
+- **FULL**: 完整实验
+  - 使用全部样本和多个 seeds
+  - 统计显著性检验
+
+## GPU 并行任务调度 (--tasks 参数)
+
+当参数包含 `--tasks=task_1a,task_1b` 时：
+- 只执行指定的任务（不是 task_plan.json 中的全部任务）
+- 只使用分配的 GPU ID（通过 `CUDA_VISIBLE_DEVICES` 传递）
+- 完成后更新 `{workspace}/exp/gpu_progress.json`：
+  1. 读取现有文件（或创建 `{"completed": [], "failed": []}`）
+  2. 将完成的 task ID 追加到 `completed` 数组
+  3. 将失败的 task ID 追加到 `failed` 数组
+  4. 原子写回（读取 → 修改 → 写回）
+
+当没有 `--tasks` 参数时，执行 task_plan.json 中的所有任务（旧行为）。
+
+## 错误处理
+
+- 如果服务器端 agent 执行超时（>30 分钟），终止并收集已有日志
+- 如果结果文件不存在，从日志中提取可用信息
+- 如果 GPU 不可用，报告错误并建议等待

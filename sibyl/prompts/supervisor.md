@@ -9,7 +9,6 @@ Review the entire research pipeline output with independent oversight.
 ## Task Template
 Read and review all pipeline outputs:
 - `{workspace}/writing/paper.md`: The paper
-- `{workspace}/critic/critique_writing.md`: Critic feedback
 - `{workspace}/exp/results/summary.md`: Experiment results
 
 Provide:

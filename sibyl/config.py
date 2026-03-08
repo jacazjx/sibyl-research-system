@@ -18,12 +18,13 @@ class Config:
     experiment: AgentConfig = field(default_factory=lambda: AgentConfig(temperature=0.3))
     writing: AgentConfig = field(default_factory=lambda: AgentConfig(temperature=0.5))
     max_parallel_tasks: int = 4
-    idea_exp_cycles: int = 3
+    idea_exp_cycles: int = 6
     experiment_timeout: int = 300
     review_enabled: bool = True
 
     # GPU scheduling
     gpu_ids: list[int] = field(default_factory=lambda: [0, 1, 2, 3])
+    gpus_per_task: int = 1
     ssh_server: str = "cs8000d"
     remote_base: str = "/home/ccwang/sibyl_system"
 
@@ -89,7 +90,7 @@ class Config:
         # Simple scalar fields
         for key in [
             "max_parallel_tasks", "experiment_timeout", "review_enabled",
-            "ssh_server", "remote_base",
+            "ssh_server", "remote_base", "gpus_per_task",
             "pilot_samples", "pilot_timeout",
             "debate_rounds", "writing_revision_rounds",
             "lark_enabled", "evolution_enabled",
