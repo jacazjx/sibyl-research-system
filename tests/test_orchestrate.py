@@ -2081,3 +2081,24 @@ class TestExperimentStateArchive:
         import json as _json
         archived_data = _json.loads(archive.read_text())
         assert "a" in archived_data["tasks"]
+
+
+class TestNaturalNextStageExperimentState:
+    def test_stays_in_stage_when_experiment_state_has_running(self, make_orchestrator):
+        from sibyl.experiment_recovery import (
+            ExperimentState, register_task, save_experiment_state,
+        )
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        tasks = [
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+
+        # experiment_state says running, but gpu_progress is empty
+        state = ExperimentState()
+        register_task(state, "a", gpu_ids=[0])
+        save_experiment_state(o.ws.active_root, state)
+
+        # record_result should stay in pilot_experiments
+        o.record_result("pilot_experiments")
+        assert o.ws.get_status().stage == "pilot_experiments"

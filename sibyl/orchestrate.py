@@ -1608,6 +1608,14 @@ class FarsOrchestrator:
         if current_stage in ("pilot_experiments", "experiment_cycle"):
             from sibyl.gpu_scheduler import get_batch_info, get_running_gpu_ids
             exp_mode = "PILOT" if current_stage == "pilot_experiments" else "FULL"
+            # Check experiment_state.json for running tasks (authoritative)
+            from sibyl.experiment_recovery import (
+                load_experiment_state, get_running_tasks as get_exp_running,
+            )
+            exp_state = load_experiment_state(self.ws.active_root)
+            exp_running = get_exp_running(exp_state)
+            if exp_running:
+                return (current_stage, None)  # wait for running tasks
             # Check if any tasks are still running
             running_gpus = get_running_gpu_ids(self.ws.active_root)
             if running_gpus:
