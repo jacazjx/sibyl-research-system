@@ -99,6 +99,7 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 
 ### Codex 集成
 - `codex_enabled`: 启用后，idea_debate、result_debate、review 阶段可引入 Codex 独立审查
+- 对于你自己的本地开发机，如果 Codex MCP 和 `OPENAI_API_KEY` 都已配置完成，建议在本地 `config.yaml` 中设 `codex_enabled: true`。这个文件会存在于工作区里，但 Git 不会跟踪和提交它
 - team action 通过 `post_steps` 顺序追加 Codex/综合步骤，而不是单独的 `codex_step`
 - Codex 来源: OpenAI Codex CLI (`codex mcp-server` stdio)，配置在 `~/.codex/config.toml`
 - 实际模型: gpt-5.4 high（由 config.toml 配置，MCP 调用时**不传 model 参数**，设 `approval-policy: "never"`）

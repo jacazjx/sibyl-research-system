@@ -358,7 +358,7 @@ See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and `~/.mcp.js
 
 ### Optional Tools
 
-- [OpenAI Codex CLI](https://github.com/openai/codex) — Independent cross-review (`codex_enabled: true`)
+- [OpenAI Codex CLI](https://github.com/openai/codex) — Independent cross-review (opt in with `codex_enabled: true`)
 - [Ralph Loop](https://github.com/anthropics/claude-code) — Autonomous iteration loop (Claude Code plugin)
 
 ## Key Mechanisms

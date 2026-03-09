@@ -360,7 +360,7 @@ workspaces/<project>/
 
 ### 可选工具
 
-- [OpenAI Codex CLI](https://github.com/openai/codex) — 独立交叉审查（`codex_enabled: true`）
+- [OpenAI Codex CLI](https://github.com/openai/codex) — 独立交叉审查（显式开启 `codex_enabled: true`）
 - [Ralph Loop](https://github.com/anthropics/claude-code) — 自主迭代循环（Claude Code 插件）
 
 ## 核心机制
