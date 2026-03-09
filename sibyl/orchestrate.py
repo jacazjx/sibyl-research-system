@@ -457,10 +457,14 @@ class FarsOrchestrator:
             self.ws.update_stage("review")
 
         if stage == "init":
-            # init is a transient stage; _get_next_stage("init") advances to literature_search
-            action = self._action_literature_search(topic, ws)
-            action.stage = "init"  # keep stage matching current state for record_result validation
-            return action
+            # init is a transient stage; the real research work starts at
+            # literature_search after callers record init as complete.
+            return Action(
+                action_type="bash",
+                bash_command="echo 'Sibyl project initialized'",
+                description="项目初始化完成，推进到 literature_search 后再执行文献调研",
+                stage="init",
+            )
 
         elif stage == "literature_search":
             return self._action_literature_search(topic, ws)
@@ -811,6 +815,17 @@ class FarsOrchestrator:
                 task_gpu_map[tid] = assignment["gpu_ids"]
                 all_task_ids.append(tid)
         register_running_tasks(self.ws.active_root, task_gpu_map)
+
+        # Register in experiment_state.json (authoritative lifecycle)
+        from sibyl.experiment_recovery import (
+            load_experiment_state, save_experiment_state, register_task as register_exp_task,
+        )
+        exp_state = load_experiment_state(self.ws.active_root)
+        remote_dir = f"{self.config.remote_base}/projects/{self.ws.name}"
+        for tid, gpus in task_gpu_map.items():
+            pid_file = f"{remote_dir}/exp/results/{tid}.pid"
+            register_exp_task(exp_state, tid, gpu_ids=gpus, pid_file=pid_file)
+        save_experiment_state(self.ws.active_root, exp_state)
 
         # Build experiment monitor for background progress tracking
         monitor = self._build_experiment_monitor(all_task_ids, est_min)
@@ -1608,6 +1623,9 @@ class FarsOrchestrator:
         if current_stage == "writing_latex" and not self.config.review_enabled:
             return ("reflection", None)
 
+        if current_stage == "pilot_experiments":
+            self._reset_experiment_runtime_state()
+
         # quality_gate: execute side effects and determine next stage
         if current_stage == "quality_gate":
             is_done, qg_score, threshold, max_iters, iteration = self._is_pipeline_done()
@@ -1702,6 +1720,30 @@ class FarsOrchestrator:
             self.ws.write_file("reflection/lessons_learned.md", lessons_content)
         if action_plan_content:
             self.ws.write_file("reflection/prev_action_plan.json", action_plan_content)
+
+    def _reset_experiment_runtime_state(self):
+        """Clear transient experiment scheduler state before the full stage."""
+        gpu_progress = self.ws.active_path("exp/gpu_progress.json")
+        if gpu_progress.exists():
+            try:
+                gpu_progress.unlink()
+            except OSError:
+                pass
+
+        results_dir = self.ws.active_path("exp/results")
+        if results_dir.exists():
+            for marker in results_dir.glob("*_DONE"):
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
+
+        for suffix in ("exp_monitor", "gpu_free"):
+            marker_path = Path(project_marker_file(self.ws.name, suffix))
+            try:
+                marker_path.unlink()
+            except OSError:
+                pass
 
     def _get_current_cycle(self) -> int:
         """Get current idea-experiment cycle number."""

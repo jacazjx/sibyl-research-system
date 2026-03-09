@@ -21,6 +21,16 @@ from sibyl.workspace import Workspace
 class TestStageTransitions:
     """Test the full pipeline stage progression."""
 
+    def test_init_action_is_noop_before_literature_search(self, make_orchestrator):
+        o = make_orchestrator(stage="init")
+
+        action = o.get_next_action()
+
+        assert action["action_type"] == "bash"
+        assert action["stage"] == "init"
+        assert action["skills"] is None
+        assert "initialized" in action["bash_command"]
+
     def test_init_advances_to_literature_search(self, make_orchestrator):
         o = make_orchestrator(stage="init")
         o.record_result("init")
@@ -513,7 +523,7 @@ class TestActionGeneration:
         o = make_orchestrator(stage="init")
         action = o.get_next_action()
         assert action["stage"] == "init"
-        assert action["action_type"] == "skill"
+        assert action["action_type"] == "bash"
 
     def test_paused_returns_paused_action(self, make_orchestrator):
         o = make_orchestrator(stage="planning")
@@ -1089,6 +1099,34 @@ class TestExperimentParallel:
         }))
         o.record_result("pilot_experiments")
         assert o.ws.get_status().stage == "experiment_cycle"
+
+    def test_pilot_to_full_resets_runtime_state_and_allows_rerun(self, make_orchestrator):
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False, max_gpus=2)
+        tasks = [
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        o.ws.write_file("exp/gpu_progress.json", json.dumps({
+            "completed": ["a", "b"], "failed": [], "running": {}, "timings": {}
+        }))
+        o.ws.write_file("exp/results/a_DONE", "{}")
+        o.ws.write_file("exp/results/b_DONE", "{}")
+        Path(project_marker_file("test-proj", "exp_monitor")).write_text("{}", encoding="utf-8")
+        Path(project_marker_file("test-proj", "gpu_free")).write_text("{}", encoding="utf-8")
+
+        o.record_result("pilot_experiments")
+
+        assert o.ws.get_status().stage == "experiment_cycle"
+        assert not o.ws.active_path("exp/gpu_progress.json").exists()
+        assert not o.ws.active_path("exp/results/a_DONE").exists()
+        assert not o.ws.active_path("exp/results/b_DONE").exists()
+        assert not Path(project_marker_file("test-proj", "exp_monitor")).exists()
+        assert not Path(project_marker_file("test-proj", "gpu_free")).exists()
+
+        action = o.get_next_action()
+        assert action["action_type"] == "skills_parallel"
+        assert len(action["skills"]) == 2
 
     def test_experiment_cycle_parallel(self, make_orchestrator):
         """experiment_cycle also supports parallel scheduling."""
@@ -1893,3 +1931,19 @@ class TestExperimentStatusDisplay:
         assert result["completed_count"] == 1
         assert result["running_count"] == 0
         assert result["pending_count"] == 0
+
+
+class TestExperimentStateIntegration:
+    def test_experiment_batch_registers_in_experiment_state(self, make_orchestrator):
+        from sibyl.experiment_recovery import load_experiment_state
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        tasks = [
+            {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+            {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
+        ]
+        o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
+        action = o.get_next_action()
+        state = load_experiment_state(o.ws.active_root)
+        assert "a" in state.tasks
+        assert "b" in state.tasks
+        assert state.tasks["a"]["status"] == "running"
