@@ -1792,6 +1792,13 @@ class FarsOrchestrator:
             except OSError:
                 pass
 
+        exp_state_path = self.ws.active_path("exp/experiment_state.json")
+        if exp_state_path.exists():
+            try:
+                exp_state_path.unlink()
+            except OSError:
+                pass
+
     def _get_current_cycle(self) -> int:
         """Get current idea-experiment cycle number."""
         logs_dir = self.ws.project_path("logs")

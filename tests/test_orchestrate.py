@@ -2130,3 +2130,19 @@ class TestCliExperimentStatusEnhanced:
         result = json.loads(captured.getvalue())
         assert "task_progress" in result
         assert result["task_progress"]["a"]["epoch"] == 50
+
+
+class TestResetExperimentRuntimeClearsState:
+    def test_reset_experiment_runtime_clears_experiment_state(self, make_orchestrator):
+        from sibyl.experiment_recovery import (
+            ExperimentState, register_task, save_experiment_state,
+            load_experiment_state,
+        )
+        o = make_orchestrator(stage="pilot_experiments")
+        state = ExperimentState()
+        register_task(state, "a", gpu_ids=[0])
+        save_experiment_state(o.ws.active_root, state)
+
+        o._reset_experiment_runtime_state()
+        fresh = load_experiment_state(o.ws.active_root)
+        assert fresh.tasks == {}
