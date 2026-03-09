@@ -6,7 +6,9 @@
 workspaces_dir: workspaces
 
 # GPU server (REQUIRED: set these to your actual server)
-ssh_server: "default"              # SSH MCP connection name (from ssh-mcp-server config)
+# Use "default" when ssh-mcp-server is configured with --host/--username directly.
+# If your MCP setup resolves a named SSH host from ~/.ssh/config, use that host alias instead.
+ssh_server: "default"              # SSH MCP connection name exposed to Sibyl
 remote_base: "/home/user/sibyl_system"  # base dir on remote server
 max_gpus: 4
 remote_env_type: "conda"           # "conda" or "venv"
@@ -29,8 +31,9 @@ experiment_mode: ssh_mcp
 # Codex independent review
 codex_enabled: false
 
-# Language for agent output: "en" (default) or "zh"
-language: en
+# Language for control-plane output: "zh" (default) or "en"
+# Paper drafting and LaTeX stay in English regardless of this setting.
+language: zh
 
 # Feishu/Lark sync
 lark_enabled: true

@@ -18,9 +18,9 @@ python3 -c "from sibyl.orchestrate import ..."
 pip install <package>
 ```
 
-依赖声明在 `requirements.txt`。如需重建环境：
+依赖由 `pyproject.toml` / `pip install -e .` 管理。`requirements.txt` 仅保留最小兼容依赖清单。如需重建环境：
 ```bash
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.12 -m venv .venv && .venv/bin/pip install -e .
 ```
 
 ## 工作目录
@@ -137,7 +137,7 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 
 ## 飞书同步（后台非阻塞）
 
-双 MCP 架构（配置在 `~/.mcp.json`）：
+双 MCP 架构（优先通过 `claude mcp add --scope local ...` 注册；旧环境也可能仍用 `~/.mcp.json`）：
 - **lark** (官方 `@larksuiteoapi/lark-mcp`): tenant token, 用于 Bitable/IM
 - **feishu** (社区 `feishu-mcp`): user OAuth, 用于文件夹/文档/原生表格
 

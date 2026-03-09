@@ -37,10 +37,18 @@ ssh my-gpu-server "nvidia-smi"
 
 ### 4. Project Config
 
-Set the SSH host name in your project `config.yaml`:
+If your SSH MCP setup resolves a named SSH host from `~/.ssh/config`, use that host name in `config.yaml`:
 
 ```yaml
 ssh_server: "my-gpu-server"    # Must match Host in ~/.ssh/config
+remote_base: "/home/your-username/sibyl_system"
+max_gpus: 4
+```
+
+If your SSH MCP server was registered with explicit `--host/--username` arguments instead, keep:
+
+```yaml
+ssh_server: "default"
 remote_base: "/home/your-username/sibyl_system"
 max_gpus: 4
 ```

@@ -4,6 +4,8 @@ This document is the **single source of truth** for configuring Sibyl Research S
 
 **Approach**: Check the current state first, then only fix what's missing. Ask the user for information you cannot detect automatically (GPU server IP, username, etc.). Report progress after each step.
 
+**Important setup preference**: For MCP servers, prefer `claude mcp add --scope local ...` unless the user explicitly wants a broader scope. Manual JSON editing is a fallback only for users already managing Claude Code MCP configs that way.
+
 ---
 
 ## Step 1: Python Environment
@@ -48,17 +50,14 @@ python3.12 -m venv .venv   # preferred
 
 ## Step 3: SSH MCP Server
 
-**Goal**: SSH MCP server configured in `~/.mcp.json` (or Claude Code managed MCP) with correct GPU server connection.
+**Goal**: SSH MCP server is registered in Claude Code with the correct GPU server connection.
 
 **Source**: [`@fangjunjie/ssh-mcp-server`](https://github.com/classfang/ssh-mcp-server) — npm package, runs via `npx`.
 
 **Check**:
 ```bash
 # Check if already configured
-cat ~/.mcp.json 2>/dev/null | python3 -m json.tool | grep -A5 "ssh-mcp-server"
-
-# Also check Claude-managed MCP (added via `claude mcp add`)
-claude mcp list 2>/dev/null | grep ssh
+claude mcp list 2>/dev/null | grep ssh-mcp-server
 ```
 
 **If not configured — ask the user**:
@@ -67,9 +66,18 @@ claude mcp list 2>/dev/null | grep ssh
 3. SSH username
 4. SSH private key path (default: `~/.ssh/id_ed25519`)
 
-**Configure** (two options):
+**Configure** (preferred):
+```bash
+claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
+  --host <GPU_HOST> --port <SSH_PORT> --username <SSH_USER> \
+  --privateKey <SSH_KEY_PATH>
+```
 
-Option A — via `~/.mcp.json` (add to existing or create new):
+Use `--scope user` instead only if the user wants the same SSH MCP entry available across multiple repos.
+
+**Manual JSON fallback**:
+If the user already manages MCP servers via JSON, update the existing Claude Code MCP config instead of creating a second source of truth. Common locations are project `.mcp.json` or older user-level `~/.mcp.json`.
+
 ```json
 {
   "mcpServers": {
@@ -85,13 +93,6 @@ Option A — via `~/.mcp.json` (add to existing or create new):
 }
 ```
 
-Option B — via Claude CLI:
-```bash
-claude mcp add ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
-  --host <GPU_HOST> --port <SSH_PORT> --username <SSH_USER> \
-  --privateKey <SSH_KEY_PATH>
-```
-
 **Critical**: The server name **must** be `"ssh-mcp-server"`. Agent prompts reference `mcp__ssh-mcp-server__execute-command`.
 
 **Verify**: After configuring, the user needs to restart Claude Code for the MCP server to load. Then:
@@ -104,7 +105,7 @@ Should return the configured server.
 
 ## Step 4: arXiv MCP Server
 
-**Goal**: arXiv MCP server installed and configured.
+**Goal**: arXiv MCP server is installed and configured to use Sibyl's local virtual environment Python.
 
 **Source**: [`arxiv-mcp-server`](https://github.com/blazickjp/arxiv-mcp-server) — Python package.
 
@@ -112,7 +113,7 @@ Should return the configured server.
 ```bash
 .venv/bin/python3 -m arxiv_mcp_server --help 2>/dev/null
 # or
-pip show arxiv-mcp-server 2>/dev/null
+.venv/bin/pip show arxiv-mcp-server 2>/dev/null
 ```
 
 **Fix if missing**:
@@ -120,22 +121,28 @@ pip show arxiv-mcp-server 2>/dev/null
 .venv/bin/pip install arxiv-mcp-server
 ```
 
-**Configure** — add to `~/.mcp.json`:
+**Configure** (preferred):
+Use the repo's absolute `.venv/bin/python3` path, not bare `python`, so Claude Code always launches the interpreter that actually has `arxiv-mcp-server` installed.
+
+```bash
+claude mcp add --scope local arxiv-mcp-server -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 -m arxiv_mcp_server
+```
+
+Replace `/ABSOLUTE/PATH/TO/sibyl-research-system` with the actual clone path.
+
+**Manual JSON fallback**:
+If the user already manages MCP servers via JSON, update the existing MCP config with the same absolute interpreter path:
+
 ```json
 {
   "mcpServers": {
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "arxiv_mcp_server"],
       "env": {}
     }
   }
 }
-```
-
-Or via CLI:
-```bash
-claude mcp add arxiv-mcp-server -- python -m arxiv_mcp_server
 ```
 
 **Critical**: The server name **must** be `"arxiv-mcp-server"`. Agent prompts reference `mcp__arxiv-mcp-server__search_papers`.
@@ -152,10 +159,11 @@ cat config.yaml 2>/dev/null
 ```
 
 **Create if missing** — ask the user for:
-1. `ssh_server`: The server connection name configured in Step 3 (usually `"default"` if using ssh-mcp-server args directly, or a hostname if using `~/.ssh/config`)
+1. `ssh_server`: The server connection name configured in Step 3 (usually `"default"` if using `ssh-mcp-server --host ...` directly, or a host alias if the MCP setup resolves one)
 2. `remote_base`: Base directory on GPU server (e.g., `/home/username/sibyl_system`)
 3. `max_gpus`: Number of GPUs to use (e.g., 4)
 4. `language`: Control-plane output language, `"zh"` (default) or `"en"`; paper drafting and LaTeX remain English
+5. `codex_enabled`: Keep `false` unless Codex MCP and `OPENAI_API_KEY` are already configured and the user explicitly wants Codex review enabled now
 
 **Write** `config.yaml`:
 ```yaml
@@ -163,13 +171,15 @@ cat config.yaml 2>/dev/null
 ssh_server: "<SSH_SERVER_NAME>"
 remote_base: "<REMOTE_BASE>"
 max_gpus: <MAX_GPUS>
-# language: zh        # uncomment and change to "en" for English control-plane output
+language: zh
+codex_enabled: false
+# Change language to "en" only if the user wants English control-plane output.
 # remote_conda_env_name: base   # optional: reuse an existing remote conda env instead of sibyl_<project>
 ```
 
 **Note**: `ssh_server` value depends on how SSH MCP was configured:
-- If using `@fangjunjie/ssh-mcp-server` with `--host` args: use `"default"` (the server auto-names the connection "default")
-- If using `~/.ssh/config` Host entries: use the Host name
+- If using `@fangjunjie/ssh-mcp-server` with `--host` args: use `"default"` (the direct connection exposed by the MCP server)
+- If the user's MCP setup resolves a named SSH host alias: use that connection name instead
 
 ---
 
@@ -179,15 +189,9 @@ max_gpus: <MAX_GPUS>
 
 **Tell the user**:
 ```bash
-# Option 1: Specify at launch (recommended for first time)
+# Recommended for first-time setup and local development
 # --dangerously-skip-permissions is strongly recommended for fully autonomous operation
 claude --plugin-dir /path/to/sibyl-research-system/plugin --dangerously-skip-permissions
-
-# Option 2: Persist in settings (edit ~/.claude/settings.json)
-{
-  "pluginDirs": ["/path/to/sibyl-research-system/plugin"]
-}
-# Then launch with: claude --dangerously-skip-permissions
 ```
 
 **Important**: Explain to the user that `--dangerously-skip-permissions` is strongly recommended because Sibyl involves hundreds of tool calls per iteration (file I/O, SSH, MCP, sub-agents). Without it, each call requires manual approval, making autonomous research impossible. However, ⚠️ warn them that this grants unrestricted execution — they should only use it on dedicated research machines and consider container/VM isolation.
@@ -228,7 +232,7 @@ pip install torch transformers datasets matplotlib numpy scikit-learn
 Run these checks to confirm everything works:
 
 1. **Python env**: `.venv/bin/python3 -c "from sibyl.config import Config; print('✓ Python OK')"`
-2. **Config file**: `cat config.yaml` — fresh installs should show ssh_server, remote_base, max_gpus, and `codex_enabled: false`
+2. **Config file**: `cat config.yaml` — fresh installs should show `ssh_server`, `remote_base`, `max_gpus`, `language`, and `codex_enabled: false`
 3. **MCP servers**: Restart Claude Code and check that `mcp__ssh-mcp-server__list-servers` and `mcp__arxiv-mcp-server__search_papers` are available
 4. **Codex (recommended on your own machine once installed)**: after installing Codex MCP and setting `OPENAI_API_KEY`, flip `codex_enabled: true` in your local `config.yaml` and verify `mcp__codex__codex` is available. That file exists in your working tree, but Git does not track or commit it
 5. **Plugin**: `/sibyl-research:status` runs without error
@@ -262,8 +266,8 @@ See [MCP Servers Guide](mcp-servers.md) for full configuration details of each.
 
 **"Permission denied" on SSH**: Check that the private key path in ssh-mcp-server args is correct and the key has been added to the server's `~/.ssh/authorized_keys`.
 
-**MCP tools not found after config**: MCP servers only load when Claude Code starts. The user must restart Claude Code after modifying `~/.mcp.json`.
+**MCP tools not found after config**: MCP servers only load when Claude Code starts. The user must restart Claude Code after adding or editing MCP servers, whether they used `claude mcp add` or manual JSON.
 
-**"arxiv_mcp_server" import error**: The `python` in the MCP config must be the one with `arxiv-mcp-server` installed. If using a venv, change `"command"` to the full path: `.venv/bin/python`.
+**"arxiv_mcp_server" import error**: The interpreter in the MCP config must be the one with `arxiv-mcp-server` installed. For Sibyl, prefer the full repo venv path such as `/path/to/sibyl-research-system/.venv/bin/python3`.
 
 **Config not taking effect**: Sibyl loads config in order: code defaults → root `config.yaml` → project `config.yaml`. Check that the file is in the right location and has valid YAML syntax.

@@ -131,6 +131,40 @@ def test_codex_integration_is_explicit_opt_in_everywhere():
             assert snippet in text, f"{rel_path} missing {snippet}"
 
 
+def test_setup_docs_prefer_claude_cli_mcp_registration():
+    required = {
+        "docs/setup-guide.md": (
+            "claude mcp add --scope local ssh-mcp-server",
+            "claude mcp add --scope local arxiv-mcp-server",
+            ".venv/bin/python3",
+        ),
+        "docs/mcp-servers.md": (
+            "claude mcp add --scope local ssh-mcp-server",
+            "claude mcp add --scope local arxiv-mcp-server",
+            "Manual JSON fallback",
+        ),
+        "docs/getting-started.md": (
+            "claude mcp add --scope local",
+            ".venv/bin/pip install -e .",
+        ),
+    }
+
+    for rel_path, snippets in required.items():
+        text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
+        for snippet in snippets:
+            assert snippet in text, f"{rel_path} missing {snippet}"
+
+
+def test_config_docs_match_runtime_defaults():
+    config_ref = (REPO_ROOT / "docs/configuration.md").read_text(encoding="utf-8")
+    config_example = (REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8")
+
+    assert '| `ssh_server` | string | `"default"` |' in config_ref
+    assert 'language: zh' in config_example
+    assert 'ssh_server: "default"' in config_example
+    assert 'language: en' not in config_example
+
+
 def test_no_unresolved_env_or_pilot_placeholders_in_prompts():
     checked = (
         REPO_ROOT / "sibyl/prompts/_common.md",

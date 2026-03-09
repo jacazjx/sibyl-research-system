@@ -37,6 +37,7 @@ if [ ! -d ".venv" ]; then
     $PY -m venv .venv
 fi
 source .venv/bin/activate
+VENV_PY="$PWD/.venv/bin/python3"
 
 echo "Installing core dependencies..."
 pip install -e . 2>&1 | tail -3
@@ -63,7 +64,10 @@ echo ""
 MCP_CONFIG="$HOME/.mcp.json"
 if [ -f "$MCP_CONFIG" ]; then
     echo "~/.mcp.json already exists — skipping MCP auto-config."
-    echo "  Verify it includes 'ssh-mcp-server' and 'arxiv-mcp-server'."
+    echo "  This script does not merge existing MCP configs."
+    echo "  Verify it includes 'ssh-mcp-server' and 'arxiv-mcp-server', or add them via:"
+    echo "    claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server ..."
+    echo "    claude mcp add --scope local arxiv-mcp-server -- $VENV_PY -m arxiv_mcp_server"
     echo "  See docs/mcp-servers.md for reference."
 else
     echo "Configuring required MCP servers..."
@@ -103,7 +107,7 @@ else
                "--privateKey", "$SSH_KEY"]
     },
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "$VENV_PY",
       "args": ["-m", "arxiv_mcp_server"],
       "env": {}
     }
@@ -120,17 +124,18 @@ MCPEOF
 ssh_server: "default"
 remote_base: "/home/$SSH_USER/sibyl_system"
 max_gpus: 4
+language: zh
 codex_enabled: false  # Opt in only after Codex MCP + OPENAI_API_KEY are configured
 CFGEOF
             echo "  ✓ Created config.yaml (edit remote_base/max_gpus as needed)"
         fi
     else
         # SSH skipped — create with arXiv only
-        cat > "$MCP_CONFIG" << 'MCPEOF'
+        cat > "$MCP_CONFIG" << MCPEOF
 {
   "mcpServers": {
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "$VENV_PY",
       "args": ["-m", "arxiv_mcp_server"],
       "env": {}
     }
@@ -140,6 +145,18 @@ MCPEOF
         echo "  ✓ arXiv MCP configured"
         echo "  ⚠ SSH MCP skipped — configure manually later. See docs/mcp-servers.md"
     fi
+fi
+
+if [ ! -f "config.yaml" ]; then
+    cat > config.yaml << CFGEOF
+# Sibyl Research System - Machine-level config (git-ignored)
+ssh_server: "default"
+remote_base: "/home/user/sibyl_system"
+max_gpus: 4
+language: zh
+codex_enabled: false  # Opt in only after Codex MCP + OPENAI_API_KEY are configured
+CFGEOF
+    echo "  ✓ Created config.yaml template (edit ssh_server/remote_base/max_gpus as needed)"
 fi
 
 # ---------- Environment variables check ----------
@@ -168,7 +185,7 @@ echo "  1. Set missing environment variables (see above)"
 echo "  2. Review config.yaml — adjust remote_base/max_gpus for your server"
 echo "     Codex stays disabled by default; enable it only after installing Codex MCP and OPENAI_API_KEY"
 echo "  3. Launch Claude Code with Sibyl plugin:"
-echo "       claude --plugin-dir ./plugin"
+echo "       claude --plugin-dir ./plugin --dangerously-skip-permissions"
 echo "  4. Inside Claude Code:"
 echo "       /sibyl-research:init              # Create a research project"
 echo "       /sibyl-research:start <project>   # Start autonomous research"
