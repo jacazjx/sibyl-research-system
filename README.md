@@ -68,7 +68,16 @@ chmod +x setup.sh && ./setup.sh    # Interactive: creates venv, installs deps, c
 
 #### 2. Configure MCP Servers
 
-Two MCP servers are required. `setup.sh` configures them interactively, or add manually to `~/.mcp.json`:
+Two MCP servers are required. `setup.sh` configures them interactively, but for manual setup the preferred path is `claude mcp add --scope local ...` so the configuration stays repo-scoped:
+
+```bash
+claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
+  --host YOUR_GPU_IP --port 22 --username YOUR_USER --privateKey ~/.ssh/id_ed25519
+
+claude mcp add --scope local arxiv-mcp-server -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 -m arxiv_mcp_server
+```
+
+If you already manage Claude Code MCP servers through JSON, update the existing MCP config instead of creating a second source of truth:
 
 ```json
 {
@@ -81,7 +90,7 @@ Two MCP servers are required. `setup.sh` configures them interactively, or add m
                "--privateKey", "~/.ssh/id_ed25519"]
     },
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "arxiv_mcp_server"]
     }
   }
@@ -98,7 +107,11 @@ Create `config.yaml` at project root (git-ignored):
 ssh_server: "default"
 remote_base: "/home/user/sibyl_system"
 max_gpus: 4
+language: zh
+codex_enabled: false
 ```
+
+Use `ssh_server: "default"` when `ssh-mcp-server` was registered with explicit `--host/--username` arguments. If your MCP setup resolves a named SSH host alias instead, use that alias.
 
 #### 4. Run
 
@@ -414,7 +427,7 @@ workspaces/<project>/
 | [bioRxiv MCP](https://github.com/JackKuo666/bioRxiv-MCP-Server) | Optional | Biology preprints | `pip install biorxiv-mcp-server` |
 | [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Optional | Web browsing | `npm install -g @playwright/mcp` |
 
-See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and `~/.mcp.json` configuration.
+See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and MCP registration details.
 
 ### Python Dependencies
 

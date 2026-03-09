@@ -19,7 +19,7 @@ Code defaults  <--  config.yaml (root)  <--  workspaces/<project>/config.yaml
 ```yaml
 # config.yaml (project root, git-ignored)
 language: zh
-ssh_server: my-gpu-box
+ssh_server: default
 remote_base: /home/user/sibyl_system
 ```
 
@@ -40,10 +40,14 @@ See [config.example.yaml](../config.example.yaml) for a minimal example.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `ssh_server` | string | `"gpu-server"` | SSH host name from `~/.ssh/config` |
+| `ssh_server` | string | `"default"` | SSH MCP connection name used for remote execution |
 | `remote_base` | string | `"/home/user/sibyl_system"` | Base directory on remote server |
 | `max_gpus` | int | `4` | Maximum GPUs to use (picks any free ones dynamically) |
 | `gpus_per_task` | int | `1` | GPUs allocated per experiment task |
+
+`ssh_server` depends on how your SSH MCP server is configured:
+- Use `default` when `ssh-mcp-server` is launched with explicit `--host/--port/--username` arguments.
+- Use a named host such as `my-gpu-box` only when your MCP setup resolves that connection name via your SSH configuration.
 
 ## GPU Polling (Shared Servers)
 
@@ -216,7 +220,7 @@ than the authoritative runtime switchboard.
 
 ```yaml
 # GPU server
-ssh_server: "my-gpu-box"
+ssh_server: "default"
 remote_base: "/data/sibyl"
 max_gpus: 8
 gpus_per_task: 2

@@ -34,7 +34,13 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 ### 4. Register MCP Server
 
-Add to `~/.mcp.json`:
+Preferred:
+
+```bash
+claude mcp add --scope local codex -e OPENAI_API_KEY=your-key-here -- codex mcp-server
+```
+
+Manual JSON fallback:
 
 ```json
 {

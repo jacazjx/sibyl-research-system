@@ -1,6 +1,10 @@
 # MCP Server Dependencies
 
-Sibyl relies on [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers for external integrations. All MCP servers are registered in `~/.mcp.json`.
+Sibyl relies on [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers for external integrations.
+
+**Preferred workflow**: register servers with `claude mcp add --scope local ...` so setup stays repo-scoped by default.
+
+**Manual JSON fallback**: if you already manage Claude Code MCP servers through JSON, update your existing MCP config instead of creating a parallel source of truth. Common setups use project `.mcp.json`, while older setups may still use `~/.mcp.json`.
 
 ## Overview
 
@@ -32,7 +36,17 @@ Requires Node.js 18+:
 npx @fangjunjie/ssh-mcp-server --help
 ```
 
-### Configure (`~/.mcp.json`)
+### Configure (preferred: `claude mcp add`)
+
+```bash
+claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
+  --host 192.168.1.100 --port 22 --username your-username \
+  --privateKey ~/.ssh/id_ed25519
+```
+
+Use `--scope user` instead only if you want the same SSH MCP entry across multiple repos.
+
+### Manual JSON fallback
 
 ```json
 {
@@ -50,14 +64,6 @@ npx @fangjunjie/ssh-mcp-server --help
 ```
 
 > **Important**: The server name **must** be `"ssh-mcp-server"` — Sibyl's agent prompts reference tools as `mcp__ssh-mcp-server__execute-command`. The `--privateKey` path should point to your SSH private key.
-
-Or use `claude mcp add`:
-
-```bash
-claude mcp add ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
-  --host 192.168.1.100 --port 22 --username your-username \
-  --privateKey ~/.ssh/id_ed25519
-```
 
 See [SSH & GPU Setup](ssh-gpu-setup.md) for server-side configuration.
 
@@ -77,13 +83,21 @@ See [SSH & GPU Setup](ssh-gpu-setup.md) for server-side configuration.
 pip install arxiv-mcp-server
 ```
 
-### Configure (`~/.mcp.json`)
+### Configure (preferred: `claude mcp add`)
+
+Use the repo's absolute `.venv/bin/python3` path, not bare `python`, so Claude Code always launches the interpreter that actually has `arxiv-mcp-server` installed:
+
+```bash
+claude mcp add --scope local arxiv-mcp-server -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 -m arxiv_mcp_server
+```
+
+### Manual JSON fallback
 
 ```json
 {
   "mcpServers": {
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "arxiv_mcp_server"],
       "env": {}
     }
@@ -112,7 +126,7 @@ cd ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
 pip install -r requirements.txt
 ```
 
-### Configure (`~/.mcp.json`)
+### Manual JSON fallback
 
 ```json
 {
@@ -155,7 +169,13 @@ model_reasoning_effort = "high"
 
 2. Set `OPENAI_API_KEY` environment variable.
 
-3. Add to `~/.mcp.json`:
+3. Prefer Claude Code CLI for MCP registration:
+
+```bash
+claude mcp add --scope local codex -e OPENAI_API_KEY=your-key-here -- codex mcp-server
+```
+
+4. If you are not using `claude mcp add`, add to your existing MCP JSON config:
 
 ```json
 {
@@ -191,7 +211,7 @@ See [Codex Integration](codex-integration.md) for full details.
 npm install -g @larksuiteoapi/lark-mcp
 ```
 
-### Configure (`~/.mcp.json`)
+### Manual JSON fallback
 
 ```json
 {
@@ -226,7 +246,7 @@ Requires a Feishu/Lark app with tenant access token. See [Feishu/Lark Setup](fei
 npm install -g feishu-mcp
 ```
 
-### Configure (`~/.mcp.json`)
+### Manual JSON fallback
 
 ```json
 {
@@ -262,7 +282,7 @@ Requires user OAuth token. See [Feishu/Lark Setup](feishu-lark-setup.md).
 pip install biorxiv-mcp-server
 ```
 
-### Configure (`~/.mcp.json`)
+### Manual JSON fallback
 
 ```json
 {
@@ -290,7 +310,7 @@ pip install biorxiv-mcp-server
 npm install -g @playwright/mcp
 ```
 
-### Configure (`~/.mcp.json`)
+### Manual JSON fallback
 
 ```json
 {
@@ -303,13 +323,13 @@ npm install -g @playwright/mcp
 }
 ```
 
-Or install as a Claude Code plugin:
+Or register it via Claude Code CLI:
 
 ```bash
-claude mcp add playwright -- npx -y @playwright/mcp
+claude mcp add --scope local playwright -- npx -y @playwright/mcp
 ```
 
-## Minimal `~/.mcp.json` Example
+## Minimal Manual MCP JSON Example
 
 A minimal configuration with only the two required servers:
 
@@ -325,14 +345,14 @@ A minimal configuration with only the two required servers:
                "--privateKey", "~/.ssh/id_ed25519"]
     },
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "arxiv_mcp_server"]
     }
   }
 }
 ```
 
-## Full `~/.mcp.json` Example
+## Full Manual MCP JSON Example
 
 All servers configured together:
 
@@ -347,7 +367,7 @@ All servers configured together:
                "--privateKey", "~/.ssh/id_ed25519"]
     },
     "arxiv-mcp-server": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "arxiv_mcp_server"]
     },
     "google-scholar": {
@@ -382,6 +402,6 @@ If you use different MCP server implementations than those listed above:
 
 1. **Tool name compatibility**: Sibyl's agent prompts reference specific MCP tool names (e.g., `mcp__arxiv-mcp-server__search_papers`). If your MCP server uses different tool names, you'll need to update the corresponding prompt files in `sibyl/prompts/`.
 
-2. **Server name in `~/.mcp.json`**: The server name in `~/.mcp.json` becomes part of the tool name prefix. For example, if you name your arXiv server `my-arxiv`, tools will be called `mcp__my-arxiv__search_papers`. Update prompt references accordingly.
+2. **Server name in the MCP config**: The server name becomes part of the tool name prefix. For example, if you name your arXiv server `my-arxiv`, tools will be called `mcp__my-arxiv__search_papers`. Update prompt references accordingly.
 
 3. **Permission allowlists**: If using `.claude/settings.local.json` for tool permissions, update the allowlist to match your server names.

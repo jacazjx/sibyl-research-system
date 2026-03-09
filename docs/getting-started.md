@@ -43,10 +43,10 @@ chmod +x setup.sh && ./setup.sh
 
 `setup.sh` will:
 - Find Python 3.12+ and create a virtual environment (`.venv/`)
-- Install core dependencies (PyYAML, rich)
+- Install Sibyl into the repo venv (`pip install -e .`)
 - Install required MCP servers (arXiv)
 - Interactively configure SSH MCP server (GPU server host, user, SSH key)
-- Create `~/.mcp.json` with SSH MCP + arXiv MCP configured
+- Create a manual MCP JSON config only when no existing MCP JSON config is present
 - Create `config.yaml` with GPU server settings
 - Check for required environment variables (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`)
 
@@ -58,12 +58,12 @@ cd sibyl-research-system
 
 # Create Python virtual environment
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -e .
 ```
 
 ### MCP Server Setup
 
-Sibyl relies on several MCP servers. `setup.sh` configures the required ones automatically. See [MCP Servers](mcp-servers.md) for full installation and configuration instructions.
+Sibyl relies on several MCP servers. `setup.sh` configures the required ones automatically when possible. For manual setup, prefer `claude mcp add --scope local ...` so the configuration stays repo-scoped by default. See [MCP Servers](mcp-servers.md) for full installation and configuration instructions.
 
 **Required (configured by setup.sh):**
 - [SSH MCP](https://github.com/classfang/ssh-mcp-server) — remote GPU execution (`@fangjunjie/ssh-mcp-server`)
@@ -87,15 +87,8 @@ Sibyl relies on several MCP servers. `setup.sh` configures the required ones aut
 Sibyl is provided as a **Claude Code Plugin**:
 
 ```bash
-# Option 1: Specify plugin dir at startup (recommended with --dangerously-skip-permissions)
+# Recommended: specify plugin dir at startup
 claude --plugin-dir /path/to/sibyl-research-system/plugin --dangerously-skip-permissions
-
-# Option 2: Persist in Claude Code settings
-# Edit ~/.claude/settings.json:
-{
-  "pluginDirs": ["/path/to/sibyl-research-system/plugin"]
-}
-# Then launch with: claude --dangerously-skip-permissions
 ```
 
 Replace `/path/to/sibyl-research-system` with your actual local path.
@@ -131,9 +124,12 @@ cp config.example.yaml config.yaml
 
 Edit the key fields:
 ```yaml
-ssh_server: "your-gpu-server"       # Must match Host in ~/.ssh/config
+ssh_server: "default"               # Use "default" when ssh-mcp-server was added with --host/--username directly
+# ssh_server: "my-gpu-server"       # Use your SSH host alias only if the MCP setup resolves one
 remote_base: "/home/you/sibyl"      # Base directory on GPU server
 max_gpus: 4                         # Max GPUs to use
+language: zh                        # Default control-plane language; paper writing still stays English
+codex_enabled: false                # Opt in only after Codex MCP + OPENAI_API_KEY are configured
 ```
 
 You can also create project-specific overrides in `workspaces/<project>/config.yaml` — these take priority over root config. See [Configuration Reference](configuration.md) for all options.
