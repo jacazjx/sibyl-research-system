@@ -124,13 +124,23 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 - 纯轻量任务（交叉批评、结果辩论）自动使用 Sonnet
 - Codex 任务使用 `gpt-5.4-high`
 
-## 飞书同步
+## 飞书同步（后台非阻塞）
 
 双 MCP 架构（配置在 `~/.mcp.json`）：
 - **lark** (官方 `@larksuiteoapi/lark-mcp`): tenant token, 用于 Bitable/IM
 - **feishu** (社区 `feishu-mcp`): user OAuth, 用于文件夹/文档/原生表格
 
 **关键规则**: 文档中的表格**必须用 `create_feishu_table` 创建原生表格**，禁止用 code block 渲染。
+
+### 后台同步机制
+- `lark_sync` **不再是流水线 stage**，改为后台非阻塞 agent
+- `cli_record()` 完成 stage 后自动追加触发到 `lark_sync/pending_sync.jsonl`，返回 `sync_requested: true`
+- 主 session 收到 `sync_requested` 后用 Agent tool (`run_in_background`) 启动 `sibyl-lark-sync` skill
+- 锁文件 `lark_sync/sync.lock` 防止并发同步（10 分钟超时自动接管）
+- 同步结果记录在 `lark_sync/sync_status.json`（含 history 审计记录）
+- 失败自动写入 `logs/errors.jsonl`，接入自愈系统
+- `cli_status()` 输出包含 `lark_sync_status` 字段
+- 不触发同步的 stage: `init`, `quality_gate`, `done`
 
 飞书同步 skill: `.claude/skills/sibyl-lark-sync/SKILL.md`
 
