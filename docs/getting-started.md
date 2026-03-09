@@ -39,7 +39,7 @@ Add this to your `~/.zshrc` or `~/.bashrc` for persistence.
 ### Option 1: Automated Setup
 
 ```bash
-git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+git clone https://github.com/Sibyl-Research-Team/sibyl-research-system.git
 cd sibyl-research-system
 chmod +x setup.sh && ./setup.sh
 ```
@@ -56,7 +56,7 @@ chmod +x setup.sh && ./setup.sh
 ### Option 2: Manual Setup
 
 ```bash
-git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+git clone https://github.com/Sibyl-Research-Team/sibyl-research-system.git
 cd sibyl-research-system
 
 # Create Python virtual environment

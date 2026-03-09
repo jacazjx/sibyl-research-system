@@ -32,7 +32,7 @@ What truly sets Sibyl apart is its **dual-loop architecture**:
 The fastest way to set up Sibyl is to let Claude Code do it for you. Clone the repo, open it in Claude Code, and ask:
 
 ```bash
-git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+git clone https://github.com/Sibyl-Research-Team/sibyl-research-system.git
 cd sibyl-research-system
 tmux new -s sibyl                                           # recommended: persistent session
 claude --plugin-dir ./plugin --dangerously-skip-permissions
@@ -63,7 +63,7 @@ Claude will automatically check your environment, install dependencies, configur
 #### 1. Install
 
 ```bash
-git clone https://github.com/Sibyl-Research/sibyl-research-system.git
+git clone https://github.com/Sibyl-Research-Team/sibyl-research-system.git
 cd sibyl-research-system
 chmod +x setup.sh && ./setup.sh    # Interactive: creates venv, installs deps, configures MCP
 ```
