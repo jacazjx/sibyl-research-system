@@ -205,6 +205,41 @@ LOOP:
           - type="codex": 使用 Skill 工具调用 sibyl-codex-reviewer
        8. 收集 teammates 和 post_steps 写入的产出文件
      "bash": 执行 bash_command。
+     "experiment_wait": 实验已在远程运行，定期轮询直到完成。
+       **绝对不要暂停项目**，必须持续轮询直到所有任务完成。
+       ```
+       WHILE true:
+         1. 等待 experiment_monitor.poll_interval_sec 秒（使用 sleep）
+         2. 用 SSH MCP execute-command 执行 check_cmd，解析 task_id:DONE/PENDING
+         3. **打印状态面板（每次轮询必须执行）：**
+            调用 cli_experiment_status:
+            .venv/bin/python3 -c "from sibyl.orchestrate import cli_experiment_status; cli_experiment_status('WORKSPACE_PATH')"
+            从返回的 JSON 中提取 display 字段，**直接用文本消息输出给用户**
+         4. 检查轮询结果：
+            - 所有 task_id 都是 DONE: 执行步骤 7 同步状态，然后跳出循环继续 cli_record
+            - 有 DONE + 有 PENDING: 输出 "部分完成"，执行步骤 5 动态调度
+            - 全部 PENDING: 继续等待
+         5. **动态调度（有任务刚完成时）：**
+            调用 cli_dispatch_tasks 获取新任务:
+            .venv/bin/python3 -c "from sibyl.orchestrate import cli_dispatch_tasks; cli_dispatch_tasks('WORKSPACE_PATH')"
+            如果返回 dispatch 非空，为每个 skill 启动新 Agent（run_in_background）
+         6. 可选：用 pid_check_cmd 检查进程存活，用 progress_check_cmd 查看详细进度
+         7. **同步实验状态（跳出循环前必须执行）：**
+            生成 SSH 检测脚本并执行恢复，确保 experiment_state.json 与远程状态一致：
+            a. 生成检测脚本:
+               .venv/bin/python3 -c "from sibyl.orchestrate import cli_recover_experiments; cli_recover_experiments('WORKSPACE_PATH')"
+               → 返回 JSON 含 script 字段
+            b. 用 SSH MCP execute-command 执行该 script，获取 ssh_output
+            c. 应用检测结果:
+               .venv/bin/python3 -c "from sibyl.orchestrate import cli_apply_recovery; cli_apply_recovery('WORKSPACE_PATH', '''SSH_OUTPUT''')"
+            这一步确保 _natural_next_stage 检测到所有任务已完成，正确推进到下一阶段。
+       ```
+       **轮询间隔是自适应的**（由 orchestrator 根据预计剩余时间计算）：
+       - 剩余 ≤15min: 每 5min
+       - 剩余 15-60min: 每 10min
+       - 剩余 1-4h: 每 15min
+       - 剩余 >4h: 每 30min
+       注意：轮询等待期间使用 sleep 而非 LLM 推理，不消耗 token。
      "gpu_poll": GPU 轮询等待（所有 GPU 被占用）。
        按 CLAUDE.md 中的 GPU 轮询协议执行，每次轮询时输出状态提示：
        ```
