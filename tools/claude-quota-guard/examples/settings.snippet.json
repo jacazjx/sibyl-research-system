@@ -1,0 +1,12 @@
+{
+  "env": {
+    "CLAUDE_QUOTA_GUARD_MIN_FIVE_HOUR_REMAINING_PERCENT": "8",
+    "CLAUDE_QUOTA_GUARD_POLL_SECONDS": "60",
+    "CLAUDE_QUOTA_GUARD_MAX_WAIT_SECONDS": "0"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node /ABSOLUTE/PATH/TO/claude-quota-guard/scripts/statusline.mjs",
+    "padding": 0
+  }
+}

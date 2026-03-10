@@ -1,0 +1,17 @@
+{
+  "name": "quota-guard",
+  "version": "0.1.0",
+  "description": "Wait on UserPromptSubmit when Claude quota is below a configured threshold, with an optional status line helper.",
+  "author": {
+    "name": "OpenAI Codex"
+  },
+  "homepage": "https://docs.anthropic.com/en/docs/claude-code/hooks",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "rate-limit",
+    "quota",
+    "statusline"
+  ]
+}
