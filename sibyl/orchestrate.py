@@ -233,6 +233,38 @@ def load_common_prompt() -> str:
     return load_prompt(filename)
 
 
+def cli_write_ralph_prompt(
+    workspace_path: str,
+    project_name: str | None = None,
+    output_path: str = "/tmp/sibyl-ralph-prompt.txt",
+) -> None:
+    """Load ralph_loop prompt template, inject parameters, write to file.
+
+    Called by start.md and resume.md to generate the Ralph Loop prompt.
+    """
+    import json
+
+    ws = Path(workspace_path)
+    if project_name is None:
+        project_name = ws.name
+
+    template = load_prompt("ralph_loop")
+    if not template:
+        print(json.dumps({"error": "ralph_loop.md not found in prompts/"}))
+        return
+
+    content = template.replace("{project_name}", project_name)
+    content = content.replace("{workspace_path}", str(workspace_path))
+
+    Path(output_path).write_text(content, encoding="utf-8")
+    print(json.dumps({
+        "status": "ok",
+        "output_path": output_path,
+        "project_name": project_name,
+        "chars": len(content),
+    }))
+
+
 @dataclass
 class AgentTask:
     """A task to be executed by a Claude Code Agent."""
