@@ -10,10 +10,14 @@ Read the proposal and hypotheses, then design concrete experiments with baseline
 Read from workspace:
 - `{workspace}/idea/proposal.md`
 - `{workspace}/idea/hypotheses.md`
+- `{workspace}/idea/candidates.json` (if it exists; use candidate IDs consistently in pilot tasks)
+- `{workspace}/exp/results/pilot_summary.md` (if it exists; use it to revise the plan instead of repeating failed pilot directions)
 
 Read planning constraints from the Skill's `Planning detail` argument.
 
 Design experiments to test each hypothesis.
+If pilot evidence already exists, prune NO-GO branches, tighten falsification criteria around ambiguous findings, and prioritize the most promising follow-up experiments.
+If a candidate pool exists, plan pilots so that 2-3 candidates can be compared fairly before full experiments. Candidate-specific tasks MUST carry a `candidate_id`.
 
 For EACH experiment task, also design a PILOT version:
 - Pilot: use the sample count and timeout specified in `Planning detail`, seed 42
@@ -119,10 +123,14 @@ This helps the experimenter save result data in formats suitable for figure gene
   {"tasks": [{"id": "task_1", "name": "...", "description": "...",
     "type": "setup|baseline|experiment|ablation|analysis",
     "depends_on": [], "expected_output": "path/to/output",
+    "candidate_id": "cand_a",
     "gpu_count": 1,
     "estimated_minutes": 30,
     "pilot": {"samples": 16, "seed": 42, "timeout": 600, "pass_criteria": "..."}}]}
   ```
+  `candidate_id` rules:
+  - Candidate-specific pilot tasks: use the candidate ID from `idea/candidates.json`
+  - Shared tasks/baselines reused by every candidate: use `"shared"` or omit the field
   **CRITICAL**: Every task MUST include `gpu_count` (number of GPUs needed), `estimated_minutes` (expected runtime), and `multi_gpu_strategy` ("single" | "DataParallel" | "DDP"). The GPU scheduler will reject task plans with missing gpu_count/estimated_minutes and block experiment execution.
 - `{workspace}/plan/pilot_plan.json`: Pilot-specific details
 

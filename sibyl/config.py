@@ -30,6 +30,9 @@ class Config:
     writing: AgentConfig = field(default_factory=lambda: AgentConfig(temperature=0.5))
     max_parallel_tasks: int = 4
     idea_exp_cycles: int = 6
+    idea_validation_rounds: int = 4
+    max_iterations: int = 10
+    max_iterations_cap: int = 100
     experiment_timeout: int = 300
     review_enabled: bool = True
 
@@ -120,7 +123,7 @@ class Config:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         cfg = cls()
-        cfg.workspaces_dir = Path(data.get("workspaces_dir", "workspaces"))
+        cfg.workspaces_dir = Path(data.get("workspaces_dir", "workspaces")).expanduser()
         for agent_name in ["ideation", "planning", "experiment", "writing"]:
             if agent_name in data:
                 setattr(cfg, agent_name, AgentConfig(**data[agent_name]))
@@ -134,7 +137,8 @@ class Config:
             "pilot_samples", "pilot_timeout",
             "debate_rounds", "writing_revision_rounds",
             "lark_enabled", "evolution_enabled",
-            "idea_exp_cycles",
+            "idea_exp_cycles", "idea_validation_rounds",
+            "max_iterations", "max_iterations_cap",
             "codex_enabled", "codex_model", "writing_mode", "codex_writing_model",
             "experiment_mode", "server_codex_path", "server_claude_path",
             "remote_env_type", "remote_conda_path", "remote_conda_env_name",

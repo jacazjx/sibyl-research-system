@@ -11,6 +11,7 @@ Read from workspace:
 - `{workspace}/plan/task_plan.json`
 - `{workspace}/plan/methodology.md`
 - `{workspace}/idea/proposal.md`
+- `{workspace}/idea/candidates.json` (if present; use `candidate_id` to group pilot findings)
 
 Read runtime parameters from the Skill arguments:
 - `Workspace path`
@@ -25,8 +26,38 @@ Read runtime parameters from the Skill arguments:
 - Run on the pilot sample budget defined in `task_plan.json` (or the configured pilot defaults if absent), using seed 42 and the configured pilot timeout budget
 - Qualitatively inspect 5-10 output samples
 - Report GO or NO-GO for each task
+- If tasks have `candidate_id`, aggregate findings per candidate so the system can compare 2-3 ideas before full experiments
 - Save results to `{workspace}/exp/results/pilots/`
 - Write `{workspace}/exp/results/pilot_summary.md`
+- Write `{workspace}/exp/results/pilot_summary.json`
+
+`pilot_summary.json` should be machine-readable, for example:
+```json
+{
+  "overall_recommendation": "REFINE",
+  "selected_candidate_id": "cand_b",
+  "candidates": [
+    {
+      "candidate_id": "cand_a",
+      "go_no_go": "NO_GO",
+      "confidence": 0.31,
+      "supported_hypotheses": [],
+      "failed_assumptions": ["H1"],
+      "key_metrics": {"accuracy": 0.71},
+      "notes": "Fails to beat shared baseline."
+    },
+    {
+      "candidate_id": "cand_b",
+      "go_no_go": "GO",
+      "confidence": 0.78,
+      "supported_hypotheses": ["H2"],
+      "failed_assumptions": [],
+      "key_metrics": {"accuracy": 0.79},
+      "notes": "Best early trade-off."
+    }
+  ]
+}
+```
 
 **FULL mode** (rigorous evaluation):
 - Run on complete dataset (or standard benchmark split)

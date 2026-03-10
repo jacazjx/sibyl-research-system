@@ -2,13 +2,17 @@
 
 Learns from cross-project experience to improve prompts and workflows.
 """
+import hashlib
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 from pathlib import Path
+
+from sibyl._paths import SYSTEM_EVOLUTION_DIR, get_system_evolution_dir
 
 
 class IssueCategory(str, Enum):
@@ -87,6 +91,204 @@ class IssueCategory(str, Enum):
         return IssueCategory.ANALYSIS  # default to analysis (most common research issue)
 
 
+_VALID_ISSUE_CATEGORIES = {member.value for member in IssueCategory}
+_CATEGORY_ALIASES = {
+    "research": "analysis",
+    "results": "analysis",
+    "evaluation": "analysis",
+    "method": "experiment",
+    "methods": "experiment",
+    "methodology": "experiment",
+    "execution": "pipeline",
+    "workflow": "pipeline",
+    "orchestration": "pipeline",
+    "compute": "efficiency",
+    "resource": "efficiency",
+    "resources": "efficiency",
+    "paper": "writing",
+    "presentation": "writing",
+}
+_SEVERITY_ALIASES = {
+    "critical": "high",
+    "blocker": "high",
+    "severe": "high",
+    "urgent": "high",
+    "moderate": "medium",
+    "normal": "medium",
+    "minor": "low",
+    "trivial": "low",
+    "nit": "low",
+}
+_STATUS_ALIASES = {
+    "open": "new",
+    "ongoing": "recurring",
+    "persistent": "recurring",
+    "repeat": "recurring",
+    "repeated": "recurring",
+    "resolved": "fixed",
+    "done": "fixed",
+    "closed": "fixed",
+}
+_QUALITY_TRAJECTORY_ALIASES = {
+    "divergent": "stagnant",
+    "mixed": "stagnant",
+    "volatile": "stagnant",
+    "oscillating": "stagnant",
+    "worsening": "declining",
+    "improve": "improving",
+}
+
+
+def _normalize_text(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _normalize_string_list(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _normalize_text(value)
+        if text and text not in seen:
+            seen.add(text)
+            normalized.append(text)
+    return normalized
+
+
+def normalize_issue_category(
+    category: object,
+    description: str = "",
+    suggestion: str = "",
+) -> str:
+    raw = (
+        _normalize_text(category)
+        .lower()
+        .replace("/", " ")
+        .replace("_", " ")
+    )
+    if raw in _VALID_ISSUE_CATEGORIES:
+        return raw
+    if raw in _CATEGORY_ALIASES:
+        return _CATEGORY_ALIASES[raw]
+    for token in raw.split():
+        if token in _VALID_ISSUE_CATEGORIES:
+            return token
+        if token in _CATEGORY_ALIASES:
+            return _CATEGORY_ALIASES[token]
+    fallback = " ".join(part for part in (description, suggestion, raw) if part)
+    return IssueCategory.classify(fallback).value
+
+
+def normalize_issue_severity(severity: object) -> str:
+    raw = _normalize_text(severity).lower()
+    if raw in {"high", "medium", "low"}:
+        return raw
+    if raw in _SEVERITY_ALIASES:
+        return _SEVERITY_ALIASES[raw]
+    return "medium"
+
+
+def normalize_issue_status(status: object) -> str:
+    raw = _normalize_text(status).lower()
+    if raw in {"new", "recurring", "fixed"}:
+        return raw
+    if raw in _STATUS_ALIASES:
+        return _STATUS_ALIASES[raw]
+    return "new"
+
+
+def normalize_quality_trajectory(trajectory: object) -> str:
+    raw = _normalize_text(trajectory).lower()
+    if raw in {"improving", "declining", "stagnant"}:
+        return raw
+    if raw in _QUALITY_TRAJECTORY_ALIASES:
+        return _QUALITY_TRAJECTORY_ALIASES[raw]
+    return "stagnant"
+
+
+def build_issue_key(description: str, category: str = "") -> str:
+    category_value = normalize_issue_category(category, description=description)
+    normalized = _normalize_text(description).lower()
+    normalized = re.sub(r"\biter(?:ation)?\s*\d+\b", " ", normalized)
+    normalized = re.sub(r"\b[ntmk]\s*=\s*\d+(?:\.\d+)?\b", " ", normalized)
+    normalized = re.sub(r"\b\d+(?:\.\d+)?(?:pp|%|x|h|min|hours?)?\b", " ", normalized)
+    normalized = re.sub(r"[^\w\u4e00-\u9fff\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    preview = "-".join(normalized.split()[:8])[:72] or "issue"
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12] if normalized else "empty"
+    return f"{category_value}:{preview}:{digest}"
+
+
+def normalize_issue_entry(issue: dict | str) -> dict | None:
+    if isinstance(issue, str):
+        issue = {"description": issue}
+    if not isinstance(issue, dict):
+        return None
+
+    description = _normalize_text(issue.get("description"))
+    if not description:
+        return None
+
+    suggestion = _normalize_text(issue.get("suggestion"))
+    category = normalize_issue_category(
+        issue.get("category"),
+        description=description,
+        suggestion=suggestion,
+    )
+    normalized = dict(issue)
+    normalized["description"] = description
+    normalized["category"] = category
+    normalized["severity"] = normalize_issue_severity(issue.get("severity"))
+    normalized["status"] = normalize_issue_status(issue.get("status"))
+    normalized["suggestion"] = suggestion
+    normalized["issue_key"] = (
+        _normalize_text(issue.get("issue_key")) or build_issue_key(description, category)
+    )
+    if "requires_system_change" in issue:
+        normalized["requires_system_change"] = bool(issue.get("requires_system_change"))
+    return normalized
+
+
+def normalize_action_plan(action_plan: dict | None) -> dict:
+    if not isinstance(action_plan, dict):
+        return {}
+
+    normalized = dict(action_plan)
+    issues: list[dict] = []
+    for issue in action_plan.get("issues_classified", []):
+        normalized_issue = normalize_issue_entry(issue)
+        if normalized_issue is not None:
+            issues.append(normalized_issue)
+    normalized["issues_classified"] = issues
+    normalized["issues_fixed"] = _normalize_string_list(action_plan.get("issues_fixed", []))
+    normalized["success_patterns"] = _normalize_string_list(action_plan.get("success_patterns", []))
+    normalized["systemic_patterns"] = _normalize_string_list(action_plan.get("systemic_patterns", []))
+    normalized["recommended_focus"] = _normalize_string_list(action_plan.get("recommended_focus", []))
+    normalized["quality_trajectory"] = normalize_quality_trajectory(
+        action_plan.get("quality_trajectory")
+    )
+
+    efficiency = action_plan.get("efficiency_analysis")
+    if isinstance(efficiency, dict):
+        normalized_efficiency = dict(efficiency)
+        utilization = efficiency.get("gpu_utilization_pct")
+        if isinstance(utilization, (int, float)):
+            normalized_efficiency["gpu_utilization_pct"] = max(0, min(int(utilization), 100))
+        idle_minutes = efficiency.get("total_gpu_idle_minutes")
+        if isinstance(idle_minutes, (int, float)):
+            normalized_efficiency["total_gpu_idle_minutes"] = max(float(idle_minutes), 0.0)
+        normalized_efficiency["bottleneck_stages"] = _normalize_string_list(
+            efficiency.get("bottleneck_stages", [])
+        )
+        normalized_efficiency["suggestions"] = _normalize_string_list(
+            efficiency.get("suggestions", [])
+        )
+        normalized["efficiency_analysis"] = normalized_efficiency
+
+    return normalized
+
+
 # Map issue categories to the agent prompt names that should receive the lesson.
 # These names must match filenames in sibyl/prompts/ (without .md).
 CATEGORY_TO_AGENTS: dict[str, list[str]] = {
@@ -145,6 +347,13 @@ class OutcomeRecord:
                 {"description": issue, "category": IssueCategory.classify(issue).value}
                 for issue in self.issues
             ]
+        normalized_issues: list[dict] = []
+        for issue in self.classified_issues:
+            normalized_issue = normalize_issue_entry(issue)
+            if normalized_issue is not None and normalized_issue.get("status") != "fixed":
+                normalized_issues.append(normalized_issue)
+        self.classified_issues = normalized_issues
+        self.success_patterns = _normalize_string_list(self.success_patterns)
 
 
 # Keywords per category for matching success patterns to digest entries
@@ -190,12 +399,26 @@ def _time_weight(timestamp_str: str) -> float:
     return math.pow(0.5, age_days / _DECAY_HALF_LIFE_DAYS)
 
 
+def _is_synthetic_test_record(record: dict) -> bool:
+    """Ignore legacy empty test records in the shared evolution ledger."""
+    return (
+        record.get("project") == "test-proj"
+        and not record.get("issues")
+        and not record.get("classified_issues")
+        and not record.get("success_patterns")
+    )
+
+
 class EvolutionEngine:
     """Cross-project experience learning and prompt improvement."""
 
-    EVOLUTION_DIR = Path.home() / ".claude" / "sibyl_evolution"
+    EVOLUTION_DIR = SYSTEM_EVOLUTION_DIR
 
     def __init__(self):
+        evolution_dir = get_system_evolution_dir()
+        if type(self).EVOLUTION_DIR != SYSTEM_EVOLUTION_DIR:
+            evolution_dir = Path(type(self).EVOLUTION_DIR)
+        self.EVOLUTION_DIR = evolution_dir
         self.EVOLUTION_DIR.mkdir(parents=True, exist_ok=True)
         self.outcomes_path = self.EVOLUTION_DIR / "outcomes.jsonl"
         self.insights_path = self.EVOLUTION_DIR / "insights.json"
@@ -237,9 +460,32 @@ class EvolutionEngine:
         for line in self.outcomes_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 try:
-                    records.append(json.loads(line))
+                    record = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if _is_synthetic_test_record(record):
+                    continue
+                normalized_issues: list[dict] = []
+                for issue in record.get("classified_issues", []):
+                    normalized_issue = normalize_issue_entry(issue)
+                    if normalized_issue is not None and normalized_issue.get("status") != "fixed":
+                        normalized_issues.append(normalized_issue)
+                record["classified_issues"] = normalized_issues
+                if not record["classified_issues"] and record.get("issues"):
+                    record["classified_issues"] = []
+                    for issue in record.get("issues", []):
+                        normalized_issue = normalize_issue_entry(
+                            {
+                                "description": issue,
+                                "category": IssueCategory.classify(issue).value,
+                            }
+                        )
+                        if normalized_issue is not None:
+                            record["classified_issues"].append(normalized_issue)
+                record["success_patterns"] = _normalize_string_list(
+                    record.get("success_patterns", [])
+                )
+                records.append(record)
         return records
 
     def build_digest(self) -> list[DigestEntry]:
@@ -257,7 +503,8 @@ class EvolutionEngine:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-        # Aggregate by (category, pattern)
+        # Aggregate by normalized issue key to reduce fragmentation when
+        # descriptions drift slightly across iterations.
         groups: dict[str, dict] = {}
         all_success: list[str] = []
         for outcome in outcomes:
@@ -266,53 +513,53 @@ class EvolutionEngine:
             classified = outcome.get("classified_issues", [])
             if not classified:
                 classified = [
-                    {"description": i, "category": IssueCategory.classify(i).value}
+                    normalize_issue_entry(
+                        {"description": i, "category": IssueCategory.classify(i).value}
+                    )
                     for i in outcome.get("issues", [])
                 ]
             for ci in classified:
-                key = ci["description"].lower().strip()
+                if ci is None or ci.get("status") == "fixed":
+                    continue
+                key = ci.get("issue_key") or build_issue_key(
+                    ci.get("description", ""),
+                    ci.get("category", ""),
+                )
                 if not key:
                     continue
                 if key not in groups:
                     groups[key] = {
                         "category": ci.get("category", "analysis"),
+                        "pattern_summary": ci.get("description", ""),
                         "count": 0, "weighted": 0.0,
                         "scores": [], "timestamps": [],
                     }
+                elif ci.get("description") and (
+                    not groups[key]["pattern_summary"]
+                    or len(ci["description"]) < len(groups[key]["pattern_summary"])
+                ):
+                    groups[key]["pattern_summary"] = ci["description"]
                 groups[key]["count"] += 1
                 groups[key]["weighted"] += weight
                 groups[key]["scores"].append(outcome["score"])
                 groups[key]["timestamps"].append(outcome.get("timestamp", ""))
 
-        # Build digest entries with effectiveness tracking
+        # Keep effectiveness conservative until we have explicit causal signals.
         entries = []
-        for pattern, data in groups.items():
+        for _, data in groups.items():
             category = data["category"]
             agents = CATEGORY_TO_AGENTS.get(category, ["reflection"])
-
-            # Effectiveness: compare early vs late scores (need >= 4 occurrences)
-            effectiveness = "unverified"
-            eff_delta = 0.0
             scores = data["scores"]
-            if len(scores) >= 4:
-                mid = len(scores) // 2
-                early_avg = sum(scores[:mid]) / mid
-                late_avg = sum(scores[mid:]) / (len(scores) - mid)
-                eff_delta = round(late_avg - early_avg, 2)
-                if eff_delta > 0.5:
-                    effectiveness = "effective"
-                elif eff_delta < -0.5:
-                    effectiveness = "ineffective"
 
             entries.append(DigestEntry(
                 category=category,
-                pattern_summary=pattern,
+                pattern_summary=data["pattern_summary"] or "issue",
                 total_occurrences=data["count"],
                 weighted_frequency=round(data["weighted"], 2),
                 avg_score_when_seen=round(sum(scores) / len(scores), 2),
                 affected_agents=agents,
-                effectiveness=effectiveness,
-                effectiveness_delta=eff_delta,
+                effectiveness="unverified",
+                effectiveness_delta=0.0,
                 last_updated=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             ))
 
@@ -397,15 +644,29 @@ class EvolutionEngine:
             "idea_debate": ["ideation"],
             "plan": ["planning", "experiment"],
         }
+        stage_lower = stage.lower()
+        if stage_lower in stage_categories:
+            stage_targets = stage_categories[stage_lower]
+        elif stage_lower.startswith("writing"):
+            stage_targets = ["writing"]
+        elif "experiment" in stage_lower:
+            stage_targets = ["experiment", "system", "efficiency"]
+        elif stage_lower.startswith("review"):
+            stage_targets = ["analysis", "writing"]
+        elif stage_lower in {"planning", "quality_gate"}:
+            stage_targets = ["planning", "analysis", "efficiency"]
+        elif "idea" in stage_lower:
+            stage_targets = ["ideation", "analysis"]
+        else:
+            stage_targets = []
         topic_lower = topic.lower()
         recent_lower = [i.lower() for i in (recent_issues or [])]
 
         def relevance_score(entry: DigestEntry) -> float:
             score = 0.0
             # Category matches stage
-            if stage in stage_categories:
-                if entry.category in stage_categories[stage]:
-                    score += 3.0
+            if stage_targets and entry.category in stage_targets:
+                score += 3.0
             # Keyword overlap with topic
             if topic_lower:
                 words = entry.pattern_summary.lower().split()
@@ -449,12 +710,6 @@ class EvolutionEngine:
         all_successes = []
         for entry in top:
             all_successes.extend(entry.success_patterns)
-        # Also collect from all outcomes for this agent's categories
-        outcomes = self._load_outcomes()
-        for o in outcomes:
-            for sp in o.get("success_patterns", []):
-                if sp not in all_successes:
-                    all_successes.append(sp)
         unique_successes = list(dict.fromkeys(all_successes))[:5]
 
         if unique_successes:
@@ -474,8 +729,10 @@ class EvolutionEngine:
         """
         insights = self.analyze_patterns()
         if not insights:
+            self.reset_overlays()
             return {}
 
+        digest = self.build_digest()
         # Collect success patterns from all outcomes
         outcomes = self._load_outcomes()
         all_success: dict[str, int] = {}
@@ -493,6 +750,10 @@ class EvolutionEngine:
 
         lessons_dir = self.EVOLUTION_DIR / "lessons"
         lessons_dir.mkdir(parents=True, exist_ok=True)
+        desired_agents = set(agent_insights)
+        for stale_path in lessons_dir.glob("*.md"):
+            if stale_path.stem not in desired_agents:
+                stale_path.unlink()
 
         written = {}
         for agent_name, insights_list in agent_insights.items():
@@ -522,21 +783,38 @@ class EvolutionEngine:
                 )
                 lines.append(f"  建议: {ins.suggestion}")
 
-            # Add success patterns section
-            # Find successes relevant to this agent's categories
+            # Add success patterns section filtered to the agent's categories.
             agent_cats = set()
             for ins in insights_list:
                 if ins.category:
                     agent_cats.add(ins.category)
+            relevant_success_counts: dict[str, int] = {}
+            for entry in digest:
+                if entry.category not in agent_cats:
+                    continue
+                for success_pattern in entry.success_patterns:
+                    relevant_success_counts[success_pattern] = (
+                        relevant_success_counts.get(success_pattern, 0) + 1
+                    )
+            if not relevant_success_counts and agent_cats:
+                agent_keywords = {
+                    keyword
+                    for category in agent_cats
+                    for keyword in _CATEGORY_KEYWORDS.get(category, [])
+                }
+                for success_pattern, count in all_success.items():
+                    success_lower = success_pattern.lower()
+                    if any(keyword in success_lower for keyword in agent_keywords):
+                        relevant_success_counts[success_pattern] = count
             relevant_successes = sorted(
-                all_success.keys(),
-                key=lambda s: -all_success[s]
+                relevant_success_counts.keys(),
+                key=lambda s: (-relevant_success_counts[s], s),
             )[:5]
             if relevant_successes:
                 lines.append("")
                 lines.append("## 继续保持")
                 for sp in relevant_successes:
-                    lines.append(f"- {sp} (出现 {all_success[sp]} 次)")
+                    lines.append(f"- {sp} (出现 {relevant_success_counts[sp]} 次)")
 
             content = "\n".join(lines) + "\n"
             overlay_path = lessons_dir / f"{agent_name}.md"
@@ -570,14 +848,22 @@ class EvolutionEngine:
         # 2. Recurring system errors (same issue 3+ times in last 5 outcomes)
         last_5 = project_outcomes[-5:]
         system_issues: dict[str, int] = {}
+        recurring_labels: dict[str, str] = {}
         for o in last_5:
             for ci in o.get("classified_issues", []):
                 if ci.get("category") == "system":
-                    key = ci["description"].lower().strip()
+                    key = ci.get("issue_key") or build_issue_key(
+                        ci.get("description", ""),
+                        "system",
+                    )
                     system_issues[key] = system_issues.get(key, 0) + 1
+                    recurring_labels.setdefault(key, ci.get("description", ""))
         recurring = {k: v for k, v in system_issues.items() if v >= 3}
         if recurring:
-            diagnostics["recurring_errors"] = list(recurring.keys())
+            diagnostics["recurring_errors"] = [
+                recurring_labels.get(key, key)
+                for key in recurring
+            ]
 
         # 3. Ineffective lessons (from digest)
         digest = self.build_digest()

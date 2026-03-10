@@ -91,6 +91,9 @@ Treat GPUs with low VRAM usage as available, even if allocated.
 | `experiment_timeout` | int | `300` | Experiment timeout in seconds |
 | `review_enabled` | bool | `true` | Enable the `review` stage after `writing_latex`; when `false`, pipeline jumps directly to `reflection` |
 | `idea_exp_cycles` | int | `6` | Maximum PIVOT count before forcing PROCEED |
+| `idea_validation_rounds` | int | `4` | Maximum pilot-guided idea refinement rounds before full experiments |
+| `max_iterations` | int | `10` | Default end-to-end project iteration budget used by the quality gate |
+| `max_iterations_cap` | int | `100` | Upper bound for `reflection/action_plan.json` → `suggested_max_iterations`; set `0` to remove the cap |
 | `debate_rounds` | int | `2` | Number of rounds in multi-agent debates |
 | `writing_revision_rounds` | int | `2` | Maximum writing revision rounds after final review |
 

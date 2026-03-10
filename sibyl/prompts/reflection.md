@@ -98,9 +98,12 @@
   },
   "recommended_focus": ["..."],
   "suggested_threshold_adjustment": 8.0,
-  "suggested_max_iterations": 3
+  "suggested_max_iterations": 20
 }
 ```
+
+说明：`suggested_max_iterations` 会受项目配置中的 `max_iterations_cap` 约束；若 `max_iterations_cap: 0`，则不设上限。
+如果没有非常明确的理由缩短或拉长预算，默认建议填 `20`，让系统有足够迭代空间。
 
 ### `{workspace}/reflection/lessons_learned.md`
 给下次迭代所有 agent 看的简明教训（遵循当前控制面语言），格式：

@@ -382,7 +382,8 @@ sibyl-system/
 │   ├── agents/                 # Agent tier definitions (heavy/standard/light)
 │   └── skills/sibyl-*/         # 30+ Fork Skills (isolated context execution)
 ├── plugin/commands/            # Claude Code plugin commands
-├── workspaces/                 # Research project workspaces
+├── tools/                      # Repo-level helper tools (not research projects)
+├── workspaces/                 # Sibyl research project workspaces only
 ├── tests/                      # Unit tests (~320 tests)
 └── requirements.txt            # Dependencies (PyYAML, rich)
 ```
@@ -393,9 +394,11 @@ Each research project has an independent filesystem under `workspaces/<project>/
 
 ```
 workspaces/<project>/
+├── CLAUDE.md                   # Effective runtime prompt (system + project memory)
 ├── status.json                 # Orchestrator state (stage/iteration/score)
 ├── config.yaml                 # Project-level config overrides
 ├── topic.txt / spec.md         # Research topic & requirements spec
+├── .sibyl/project/             # Project memory and prompt overlays
 ├── context/literature.md       # Literature review
 ├── idea/                       # Proposals, alternatives, debate records
 ├── plan/                       # Experiment plan, task_plan.json
@@ -404,6 +407,8 @@ workspaces/<project>/
 ├── logs/                       # Iteration archives, research diary
 └── lark_sync/                  # Feishu/Lark sync registry
 ```
+
+Repo-level helper utilities belong under `tools/`, not `workspaces/`. If a directory under `workspaces/` does not have Sibyl project state such as `status.json`, it should be moved out.
 
 ## Documentation
 

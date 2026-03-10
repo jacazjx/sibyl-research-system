@@ -5,6 +5,10 @@ __pycache__/
 dist/
 build/
 workspaces/
+.sibyl/
+pytest-of-*/
+pytest-current
+tools/*/.tmp-state/
 .claude/*
 !.claude/agents/
 !.claude/agents/*.md

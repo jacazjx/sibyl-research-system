@@ -42,6 +42,7 @@ All research outputs are stored in the shared workspace directory. Use Read and 
 ├── idea/
 │   ├── proposal.md          # Final synthesized proposal
 │   ├── alternatives.md      # Alternative plans (for pivot)
+│   ├── candidates.json      # 2-3 viable idea candidates kept alive through pilot
 │   ├── references.json      # [{title, authors, abstract, url, year}]
 │   ├── hypotheses.md        # Testable hypotheses
 │   ├── initial_ideas.md     # User's initial ideas
@@ -58,6 +59,8 @@ All research outputs are stored in the shared workspace directory. Use Read and 
 │   ├── results/
 │   │   ├── pilots/          # Pilot experiment results
 │   │   └── full/            # Full experiment results
+│   │   ├── pilot_summary.md # Human-readable pilot summary
+│   │   └── pilot_summary.json # Structured pilot signals for branching
 │   ├── logs/                # Execution logs
 │   └── experiment_db.jsonl  # Experiment database
 ├── writing/
@@ -74,6 +77,8 @@ All research outputs are stored in the shared workspace directory. Use Read and 
 ├── context/
 │   └── literature.md        # Literature survey report (arXiv + Web, auto-generated)
 ├── supervisor/              # Supervision review
+│   ├── idea_validation_decision.md   # ADVANCE / REFINE / PIVOT after pilots
+│   └── idea_validation_decision.json # Structured validation decision
 ├── critic/                  # Critique feedback
 ├── reflection/              # Reflection outputs
 ├── codex/                   # Codex independent review results
@@ -132,3 +137,43 @@ These rules ensure system self-evolution is **reversible, traceable, and safe**.
 - Flag suspicious results (>30% improvement over simple baselines)
 - Save sample outputs, not just statistics
 - Honestly report negative results
+
+## Agent Execution Logging (CRITICAL)
+
+Every agent **MUST** log its execution start and end for the monitoring dashboard.
+
+### At Start (first step)
+
+Before any research work, immediately run:
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_log_agent; cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='start', model_tier='$AGENT_TIER')"
+```
+
+Where `$WORKSPACE`, `$STAGE`, `$AGENT_NAME`, `$AGENT_TIER` come from variables defined in SKILL.md. If `$STAGE` is not provided, pass empty string (the function auto-reads from status.json).
+
+### At End (last step)
+
+After completing all work (after writing output files), run:
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "
+from sibyl.orchestrate import cli_log_agent
+cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='end', status='ok',
+              output_files='$OUTPUT_FILES',
+              output_summary='$OUTPUT_SUMMARY')
+"
+```
+
+- `$OUTPUT_FILES`: comma-separated relative paths of output files (e.g., `idea/perspectives/innovator.md`)
+- `$OUTPUT_SUMMARY`: one-sentence summary of your output (under 100 chars)
+
+### Error Handling
+
+If you encounter an error that prevents completion, run before exiting:
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_log_agent; cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='end', status='error', output_summary='$ERROR_MESSAGE')"
+```
+
+**Logging failures must not block the main task.** If cli_log_agent errors, ignore and continue normal work.

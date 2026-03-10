@@ -1,8 +1,10 @@
 # Sibyl Research System Configuration
-# Copy to project root as config.yaml for machine-level defaults (git-ignored)
-# Or to workspaces/<project>/config.yaml for project-specific overrides
+# Copy to Sibyl system root as config.yaml for machine-level defaults (git-ignored)
+# Or to <workspace>/config.yaml for project-specific overrides
 # Full reference: docs/configuration.md
 
+# Recommended: use an absolute path outside sibyl-system so projects are physically separated.
+# Example: /Users/you/.sibyl/workspaces
 workspaces_dir: workspaces
 
 # GPU server (REQUIRED: set these to your actual server)
@@ -40,6 +42,9 @@ lark_enabled: true
 
 # Iteration control
 idea_exp_cycles: 6         # max PIVOT count
+idea_validation_rounds: 4  # pilot-guided idea refinement loops before full experiments
+max_iterations: 10         # default project-level iteration budget
+max_iterations_cap: 100    # reflection can raise/lower max_iterations up to this cap
 writing_revision_rounds: 2 # max writing revision rounds
 debate_rounds: 2           # debate rounds
 

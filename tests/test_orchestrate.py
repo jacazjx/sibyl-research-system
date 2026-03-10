@@ -10,7 +10,7 @@ from sibyl.orchestrate import (
     FarsOrchestrator, load_prompt, load_common_prompt,
     PAPER_SECTIONS, cli_checkpoint, cli_dispatch_tasks,
     project_marker_file, self_heal_monitor_script,
-    cli_experiment_status,
+    cli_experiment_status, migrate_workspace, collect_dashboard_data,
 )
 from sibyl.workspace import Workspace
 
@@ -47,7 +47,7 @@ class TestStageTransitions:
             "writing_latex", "review",
             "reflection",
         ]
-        o = make_orchestrator(stage="literature_search")
+        o = make_orchestrator(stage="literature_search", idea_validation_rounds=0)
         for i, stage in enumerate(linear_stages[:-1]):
             o.ws.update_stage(stage)
             # writing_final_review needs a passing review file, otherwise
@@ -303,6 +303,24 @@ class TestQualityGate:
         assert threshold == 8.0  # default, not 100
         assert max_iters == 10  # default, not 999
 
+    def test_max_iterations_not_hard_capped_at_20(self, make_orchestrator):
+        o = make_orchestrator(stage="quality_gate", iteration=2, max_iterations_cap=100)
+        o.ws.write_file("supervisor/review_writing.md", "score: 7.0")
+        o.ws.write_file("reflection/action_plan.json", json.dumps({
+            "suggested_max_iterations": 50,
+        }))
+        _, _, max_iters = o._parse_quality_gate_params()
+        assert max_iters == 50
+
+    def test_max_iterations_cap_zero_disables_upper_bound(self, make_orchestrator):
+        o = make_orchestrator(stage="quality_gate", iteration=2, max_iterations_cap=0)
+        o.ws.write_file("supervisor/review_writing.md", "score: 7.0")
+        o.ws.write_file("reflection/action_plan.json", json.dumps({
+            "suggested_max_iterations": 250,
+        }))
+        _, _, max_iters = o._parse_quality_gate_params()
+        assert max_iters == 250
+
 
 # ══════════════════════════════════════════════
 # Iteration boundary (archive + clear)
@@ -470,6 +488,81 @@ class TestPivot:
         o.ws.write_file("supervisor/experiment_analysis.md", "Decision: pivot")
         o.record_result("experiment_decision")
         assert o.ws.get_status().stage == "idea_debate"
+
+
+class TestIdeaValidationLoop:
+    def test_pilot_stage_enters_validation_decision_when_enabled(self, make_orchestrator):
+        o = make_orchestrator(stage="pilot_experiments", idea_validation_rounds=2)
+        o.record_result("pilot_experiments")
+        assert o.ws.get_status().stage == "idea_validation_decision"
+
+    def test_validation_decision_advance_filters_selected_candidate(self, make_orchestrator):
+        o = make_orchestrator(stage="idea_validation_decision", idea_validation_rounds=2)
+        o.ws.write_file(
+            "plan/task_plan.json",
+            json.dumps({
+                "tasks": [
+                    {"id": "shared_setup", "candidate_id": "shared", "depends_on": [],
+                     "gpu_count": 1, "estimated_minutes": 5},
+                    {"id": "cand_a_train", "candidate_id": "cand_a", "depends_on": ["shared_setup"],
+                     "gpu_count": 1, "estimated_minutes": 10},
+                    {"id": "cand_b_train", "candidate_id": "cand_b", "depends_on": ["shared_setup"],
+                     "gpu_count": 1, "estimated_minutes": 10},
+                ]
+            }),
+        )
+        o.ws.write_file(
+            "supervisor/idea_validation_decision.json",
+            json.dumps({
+                "decision": "ADVANCE",
+                "selected_candidate_id": "cand_b",
+                "confidence": 0.82,
+            }),
+        )
+        o.record_result("idea_validation_decision")
+        assert o.ws.get_status().stage == "experiment_cycle"
+        plan = json.loads(o.ws.read_file("plan/task_plan.json"))
+        task_ids = [task["id"] for task in plan["tasks"]]
+        assert task_ids == ["shared_setup", "cand_b_train"]
+        selected = json.loads(o.ws.read_file("plan/selected_candidate.json"))
+        assert selected["selected_candidate_id"] == "cand_b"
+
+    def test_validation_decision_refine_loops_back_to_idea_debate(self, make_orchestrator):
+        o = make_orchestrator(stage="idea_validation_decision", idea_validation_rounds=2)
+        o.ws.write_file("idea/perspectives/innovator.md", "old idea")
+        o.ws.create_checkpoint(
+            "idea_debate",
+            "idea",
+            {"innovator": "idea/perspectives/innovator.md"},
+            iteration=0,
+        )
+        o.ws.complete_checkpoint_step("idea", "innovator")
+        o.ws.write_file(
+            "supervisor/idea_validation_decision.json",
+            json.dumps({
+                "decision": "REFINE",
+                "selected_candidate_id": "cand_b",
+                "confidence": 0.61,
+            }),
+        )
+        o.record_result("idea_validation_decision")
+        assert o.ws.get_status().stage == "idea_debate"
+        markers = list((o.ws.root / "logs").glob("idea_validation_round_*.marker"))
+        assert len(markers) == 1
+        action = o.get_next_action()
+        assert action["action_type"] == "team"
+
+    def test_validation_decision_refine_respects_round_limit(self, make_orchestrator):
+        o = make_orchestrator(stage="idea_validation_decision", idea_validation_rounds=1)
+        o.ws.write_file("logs/idea_validation_round_1.marker", "round 1")
+        o.ws.write_file(
+            "supervisor/idea_validation_decision.json",
+            json.dumps({"decision": "REFINE", "selected_candidate_id": "cand_a"}),
+        )
+        o.record_result("idea_validation_decision")
+        assert o.ws.get_status().stage == "experiment_cycle"
+        errors = o.ws.get_status().errors
+        assert any("more refinement rounds than allowed" in e["error"] for e in errors)
 
 
 # ══════════════════════════════════════════════
@@ -689,6 +782,12 @@ class TestActionGeneration:
         action = o.get_next_action()
         assert action["skills"][0]["name"] == "sibyl-server-experimenter"
 
+    def test_idea_validation_decision_returns_skill(self, make_orchestrator):
+        o = make_orchestrator(stage="idea_validation_decision")
+        action = o.get_next_action()
+        assert action["action_type"] == "skill"
+        assert action["skills"][0]["name"] == "sibyl-idea-validation-decision"
+
     def test_idea_debate_team_structure(self, make_orchestrator):
         """idea_debate returns structured team with 6 teammates + post_steps."""
         o = make_orchestrator(stage="idea_debate")
@@ -710,6 +809,21 @@ class TestActionGeneration:
         skill_steps = [s for s in team["post_steps"] if s["type"] == "skill"]
         assert any(s["skill"] == "sibyl-synthesizer" for s in skill_steps)
         assert "prompt" in team
+
+    def test_idea_debate_context_includes_pilot_feedback(self, make_orchestrator):
+        o = make_orchestrator(stage="idea_debate")
+        o.ws.write_file("idea/proposal.md", "# Proposal\nInitial direction")
+        o.ws.write_file("idea/hypotheses.md", "# Hypotheses\nH1")
+        o.ws.write_file("exp/results/pilot_summary.md", "# Pilot Summary\nNO-GO on branch A")
+        o.ws.write_file("idea/candidates.json", json.dumps({
+            "candidates": [{"candidate_id": "cand_a", "status": "front_runner"}]
+        }))
+        action = o.get_next_action()
+        context = o.ws.read_file("context/idea_context.md") or ""
+        assert "小型实验真实反馈" in context
+        assert "NO-GO on branch A" in context
+        assert "当前候选 idea 池" in context
+        assert "evidence-driven refinement round" in action["team"]["prompt"]
 
     def test_result_debate_team_structure(self, make_orchestrator):
         """result_debate returns structured team with 6 teammates + synthesizer."""
@@ -990,13 +1104,14 @@ class TestSkillArgContracts:
         action = o.get_next_action()
         args = shlex.split(action["skills"][0]["args"])
 
-        assert args[0] == "plan"
-        assert args[1] == str(o.ws.root)
+        assert args[0] == str(o.ws.root)
+        assert args[1] == "plan"
         assert "samples=" in args[2]
         assert "timeout=" in args[2]
 
     def test_planner_fix_gpu_args_use_explicit_mode(self, make_orchestrator):
-        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False,
+                              idea_validation_rounds=0)
         o.ws.write_file("plan/task_plan.json", json.dumps({
             "tasks": [{"id": "a", "depends_on": [], "name": "broken"}]
         }))
@@ -1005,7 +1120,7 @@ class TestSkillArgContracts:
         args = shlex.split(action["skills"][0]["args"])
 
         assert action["skills"][0]["name"] == "sibyl-planner"
-        assert args == ["fix-gpu", str(o.ws.root)]
+        assert args == [str(o.ws.root), "fix-gpu"]
 
     def test_experimenter_args_include_remote_env_command(self, make_orchestrator):
         o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
@@ -1014,8 +1129,8 @@ class TestSkillArgContracts:
 
         assert action["skills"][0]["name"] == "sibyl-experimenter"
         assert args[:5] == [
-            "PILOT",
             str(o.ws.root),
+            "PILOT",
             "default",
             "/home/user/sibyl_system",
             o.config.get_remote_env_cmd(o.ws.name),
@@ -1033,8 +1148,8 @@ class TestSkillArgContracts:
 
         assert action["skills"][0]["name"] == "sibyl-server-experimenter"
         assert args[:7] == [
-            "PILOT",
             str(o.ws.root),
+            "PILOT",
             "default",
             "/home/user/sibyl_system",
             o.config.get_remote_env_cmd(o.ws.name),
@@ -1053,8 +1168,8 @@ class TestSkillArgContracts:
 
         assert action["skills"][0]["name"] == "sibyl-server-experimenter"
         assert args[:7] == [
-            "PILOT",
             str(o.ws.root),
+            "PILOT",
             "default",
             "/home/user/sibyl_system",
             o.config.get_remote_env_cmd(o.ws.name),
@@ -1067,14 +1182,14 @@ class TestSkillArgContracts:
         action = o.get_next_action()
         teammate = next(t for t in action["team"]["teammates"] if t["name"] == "writer-related_work")
 
-        assert shlex.split(teammate["args"]) == ["Related Work", "related_work", str(o.ws.root)]
+        assert shlex.split(teammate["args"]) == [str(o.ws.root), "Related Work", "related_work"]
 
     def test_section_critic_args_match_skill_contract(self, make_orchestrator):
         o = make_orchestrator(stage="writing_critique")
         action = o.get_next_action()
         teammate = next(t for t in action["team"]["teammates"] if t["name"] == "critic-related_work")
 
-        assert shlex.split(teammate["args"]) == ["Related Work", "related_work", str(o.ws.root)]
+        assert shlex.split(teammate["args"]) == [str(o.ws.root), "Related Work", "related_work"]
 
     def test_latex_writer_args_preserve_remote_base_spaces(self, make_orchestrator):
         o = make_orchestrator(
@@ -1129,6 +1244,26 @@ class TestPromptLoading:
         finally:
             os.environ.pop("SIBYL_LANGUAGE", None)
 
+    def test_load_common_prompt_appends_project_memory(self, tmp_path, monkeypatch):
+        ws = Workspace(tmp_path, "prompt-proj")
+        memory_path = ws.root / ".sibyl" / "project" / "MEMORY.md"
+        memory_path.write_text("# Project Memory\n\n- Prefer CIFAR-10 only\n", encoding="utf-8")
+
+        monkeypatch.chdir(ws.root)
+        prompt = load_common_prompt()
+
+        assert "Prefer CIFAR-10 only" in prompt
+
+    def test_load_prompt_appends_project_overlay(self, tmp_path, monkeypatch):
+        ws = Workspace(tmp_path, "overlay-proj")
+        overlay_path = ws.root / ".sibyl" / "project" / "prompt_overlays" / "planner.md"
+        overlay_path.write_text("Project overlay: reuse the frozen baseline.", encoding="utf-8")
+
+        monkeypatch.chdir(ws.root)
+        prompt = load_prompt("planner")
+
+        assert "Project overlay: reuse the frozen baseline." in prompt
+
     def test_sequential_writer_requires_figures_block(self):
         prompt = load_prompt("sequential_writer")
         assert "<!-- FIGURES" in prompt
@@ -1140,6 +1275,96 @@ class TestPromptLoading:
         assert "sibyl/templates/neurips_2024/neurips_2024.sty" in prompt
         assert Path("sibyl/templates/neurips_2024/neurips_2024.tex").is_file()
         assert Path("sibyl/templates/neurips_2024/neurips_2024.sty").is_file()
+
+    def test_reflection_prompt_defaults_suggested_max_iterations_to_20(self):
+        prompt = load_prompt("reflection")
+        assert '"suggested_max_iterations": 20' in prompt
+        assert "默认建议填 `20`" in prompt
+
+
+class TestMigration:
+    def test_migrate_workspace_backfills_layered_scaffold(self, tmp_path, monkeypatch):
+        project = tmp_path / "legacy-proj"
+        (project / "idea").mkdir(parents=True)
+        (project / "status.json").write_text(json.dumps({
+            "stage": "done",
+            "started_at": 1000.0,
+            "updated_at": 1100.0,
+            "iteration": 0,
+            "errors": [],
+        }))
+        (project / "idea" / "proposal.md").write_text(
+            "# Legacy Topic\n\nSome legacy project notes.\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(Path(__file__).resolve().parents[1])
+        result = migrate_workspace(project)
+
+        assert result["runtime"]["migration_needed"] is False
+        assert result["runtime"]["runtime_ready"] is True
+        assert result["runtime"]["scaffold_ready"] is True
+        assert (project / "topic.txt").exists()
+        assert (project / "config.yaml").exists()
+        assert (project / "spec.md").exists()
+        assert (project / ".git").exists()
+        assert (project / ".sibyl" / "project" / "MEMORY.md").exists()
+        status = json.loads((project / "status.json").read_text(encoding="utf-8"))
+        assert status["iteration"] == 1
+        assert status["paused"] is False
+        assert status["stop_requested"] is False
+        assert status["stage_started_at"] == 1100.0
+
+    def test_migrate_workspace_flattens_legacy_nested_workspace_dir(self, tmp_path, monkeypatch):
+        project = tmp_path / "nested-proj"
+        (project / "lark_sync").mkdir(parents=True)
+        (project / "remote-data").mkdir(parents=True)
+        (project / "status.json").write_text(json.dumps({
+            "stage": "reflection",
+            "started_at": 1000.0,
+            "updated_at": 1200.0,
+            "iteration": 1,
+            "errors": [],
+            "iteration_dirs": False,
+        }))
+        (project / "topic.txt").write_text("Nested topic\n", encoding="utf-8")
+        (project / "lark_sync" / "pending_sync.jsonl").write_text(
+            '{"trigger_stage":"review","timestamp":"2026-03-09T08:40:24+00:00","iteration":0}\n',
+            encoding="utf-8",
+        )
+        legacy_dir = project / "nested-proj" / "lark_sync"
+        legacy_dir.mkdir(parents=True)
+        legacy_dir.joinpath("pending_sync.jsonl").write_text(
+            '{"trigger_stage":"writing_integrate","timestamp":"2026-03-09T08:08:12+00:00","iteration":0}\n',
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(Path(__file__).resolve().parents[1])
+        result = migrate_workspace(project)
+
+        assert not (project / "nested-proj").exists()
+        pending_lines = (project / "lark_sync" / "pending_sync.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        assert len(pending_lines) == 2
+        assert "2026-03-09T08:08:12+00:00" in pending_lines[0]
+        assert result["runtime"]["nested_project_dir_exists"] is False
+        assert result["warnings"] == []
+
+    def test_collect_dashboard_data_includes_runtime(self, tmp_path):
+        ws = Workspace(tmp_path, "dashboard-proj")
+        ws.write_file("topic.txt", "Dashboard topic")
+        ws.write_file("config.yaml", "language: zh\n")
+        ws.write_file("spec.md", "# 项目: dashboard-proj\n\n## 研究主题\nDashboard topic\n")
+        (ws.root / ".git").mkdir(exist_ok=True)
+        (ws.root / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+        ws.write_file("logs/events.jsonl", "")
+
+        payload = collect_dashboard_data(ws.root)
+
+        assert payload["status"]["name"] == "dashboard-proj"
+        assert payload["runtime"]["runtime_ready"] is True
+        assert "stages" in payload
 
 
 # ══════════════════════════════════════════════
@@ -1187,7 +1412,8 @@ class TestExperimentParallel:
 
     def test_experiment_advances_when_all_done(self, make_orchestrator):
         """When all tasks complete, advances to next stage."""
-        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False,
+                              idea_validation_rounds=0)
         tasks = [{"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10}]
         o.ws.write_file("plan/task_plan.json", json.dumps({"tasks": tasks}))
         o.ws.write_file("exp/gpu_progress.json", json.dumps({
@@ -1197,7 +1423,8 @@ class TestExperimentParallel:
         assert o.ws.get_status().stage == "experiment_cycle"
 
     def test_pilot_to_full_resets_runtime_state_and_allows_rerun(self, make_orchestrator):
-        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False, max_gpus=2)
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False, max_gpus=2,
+                              idea_validation_rounds=0)
         tasks = [
             {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
             {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
@@ -1274,7 +1501,8 @@ class TestExperimentParallel:
 
     def test_per_task_gpu_count(self, make_orchestrator):
         """Tasks with per-task gpu_count override the default."""
-        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False,
+                              idea_validation_rounds=0)
         tasks = [
             {"id": "a", "depends_on": [], "gpu_count": 2, "estimated_minutes": 10},
             {"id": "b", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
@@ -1805,7 +2033,7 @@ class TestDynamicGpuDispatch:
         assert len(result["dispatch"]) == 1
         assert result["dispatch"][0]["task_ids"] == ["c"]
         args = shlex.split(result["skills"][0]["args"])
-        assert args[1] == str(o.ws.root / "current")
+        assert args[:2] == [str(o.ws.root / "current"), "PILOT"]
 
         active_progress = json.loads((o.ws.root / "current" / "exp" / "gpu_progress.json").read_text(encoding="utf-8"))
         assert "c" in active_progress["running"]
@@ -1840,7 +2068,8 @@ class TestExperimentStageWithRunning:
         assert next_stage == "pilot_experiments"  # stays because task still running
 
     def test_advances_when_no_running_no_remaining(self, make_orchestrator):
-        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False)
+        o = make_orchestrator(stage="pilot_experiments", gpu_poll_enabled=False,
+                              idea_validation_rounds=0)
         tasks = [
             {"id": "a", "depends_on": [], "gpu_count": 1, "estimated_minutes": 10},
         ]
@@ -2158,10 +2387,10 @@ class TestExperimentWaitAction:
 
         action = o.get_next_action()
         assert action["action_type"] == "experiment_wait"
-        assert action["experiment_monitor"]["poll_interval_sec"] == 600  # 10 min (10min remaining → ≤60min tier)
+        assert action["experiment_monitor"]["poll_interval_sec"] == 120  # 2 min (10min remaining → ≤30min tier)
 
     def test_experiment_wait_adaptive_interval_long(self, make_orchestrator):
-        """Long remaining time → 30min poll interval."""
+        """Long remaining time → 10min poll interval."""
         from sibyl.experiment_recovery import (
             ExperimentState, register_task, save_experiment_state,
         )
@@ -2180,7 +2409,7 @@ class TestExperimentWaitAction:
 
         action = o.get_next_action()
         assert action["action_type"] == "experiment_wait"
-        assert action["experiment_monitor"]["poll_interval_sec"] == 1800  # 30 min (>4h)
+        assert action["experiment_monitor"]["poll_interval_sec"] == 600  # 10 min (>120min)
 
     def test_schedules_new_batch_when_pending_tasks_exist(self, make_orchestrator):
         """When some tasks are running but others are pending, schedule new batch."""

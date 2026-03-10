@@ -18,6 +18,9 @@ class TestConfig:
         c = Config()
         assert c.ssh_server == "default"
         assert c.pilot_samples == 16
+        assert c.idea_validation_rounds == 4
+        assert c.max_iterations == 10
+        assert c.max_iterations_cap == 100
         assert c.writing_mode == "parallel"
         assert c.experiment_mode == "ssh_mcp"
         assert c.lark_enabled is True
@@ -100,6 +103,9 @@ remote_env_type: venv
 remote_conda_path: /custom/conda
 remote_conda_env_name: shared-env
 iteration_dirs: true
+idea_validation_rounds: 2
+max_iterations: 12
+max_iterations_cap: 200
 """
         yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text(yaml_content, encoding="utf-8")
@@ -108,6 +114,9 @@ iteration_dirs: true
         assert c.remote_conda_path == "/custom/conda"
         assert c.remote_conda_env_name == "shared-env"
         assert c.iteration_dirs is True
+        assert c.idea_validation_rounds == 2
+        assert c.max_iterations == 12
+        assert c.max_iterations_cap == 200
 
     def test_invalid_remote_env_type(self, tmp_path):
         yaml_path = tmp_path / "bad.yaml"
@@ -121,6 +130,9 @@ iteration_dirs: true
         assert c.remote_conda_path == ""
         assert c.remote_conda_env_name == ""
         assert c.iteration_dirs is False
+        assert c.idea_validation_rounds == 4
+        assert c.max_iterations == 10
+        assert c.max_iterations_cap == 100
 
 
 # ══════════════════════════════════════════════

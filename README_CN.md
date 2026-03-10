@@ -376,7 +376,8 @@ sibyl-system/
 │   ├── agents/                 # Agent 层级定义（heavy/standard/light）
 │   └── skills/sibyl-*/         # 30+ Fork Skills（隔离上下文执行）
 ├── plugin/commands/            # Claude Code 插件命令
-├── workspaces/                 # 研究项目工作区
+├── tools/                      # 仓库级辅助工具（不是研究项目）
+├── workspaces/                 # 仅放 Sibyl 研究项目工作区
 ├── tests/                      # 单元测试（~320 个）
 └── requirements.txt            # 依赖（PyYAML, rich）
 ```
@@ -387,9 +388,11 @@ sibyl-system/
 
 ```
 workspaces/<project>/
+├── CLAUDE.md                   # 运行时合成后的提示词（系统 + 项目记忆）
 ├── status.json                 # 编排器状态（阶段/迭代/分数）
 ├── config.yaml                 # 项目级配置覆盖
 ├── topic.txt / spec.md         # 研究主题与需求规格
+├── .sibyl/project/             # 项目记忆与 prompt overlay
 ├── context/literature.md       # 文献综述
 ├── idea/                       # 提案、备选方案、辩论记录
 ├── plan/                       # 实验方案、task_plan.json
@@ -398,6 +401,8 @@ workspaces/<project>/
 ├── logs/                       # 迭代归档、研究日志
 └── lark_sync/                  # 飞书同步注册表
 ```
+
+仓库级辅助工具应该放在 `tools/` 下，而不是 `workspaces/`。如果 `workspaces/` 里的目录没有 Sibyl 项目状态文件，例如 `status.json`，就应该迁出去。
 
 ## 文档
 

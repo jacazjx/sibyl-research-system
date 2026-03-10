@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sibyl Dashboard</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+<script src="https://unpkg.com/element-plus"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<style>
+  /* ── Theme: Light + Orange Nutrient ───────────────── */
+  :root {
+    --bg-deep: #f0f2f5; --bg-primary: #f7f8fa; --bg-raised: #ffffff;
+    --bg-hover: #f3f0ed; --bg-input: #f5f6f8;
+    --border: #e5e8ed; --border-light: #eff0f3;
+    --text-primary: #1a1f2b; --text-secondary: #5f6877; --text-muted: #a0a7b4;
+    --accent: #d4622b; --accent-hover: #e8723a; --accent-dim: rgba(212,98,43,0.06);
+    --accent-border: rgba(212,98,43,0.18); --accent-glow: rgba(212,98,43,0.04);
+    --success: #2d9d4a; --success-dim: rgba(45,157,74,0.07);
+    --warning: #c08a1a; --danger: #d04040; --info: #3a7bd5;
+    --el-color-primary: #d4622b; --el-color-primary-light-3: #dd7f4f;
+    --el-color-primary-light-5: #e59c73; --el-color-primary-light-7: #edb997;
+    --el-color-primary-light-9: #f5d6bb; --el-color-primary-dark-2: #aa4e22;
+  }
+
+  /* ── Base ───────────────────────────────────────────── */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-deep); color: var(--text-primary); }
+  #app { min-height: 100vh; }
+  ::selection { background: var(--accent); color: #fff; }
+
+  /* ── Login ──────────────────────────────────────────── */
+  .login-overlay { position: fixed; inset: 0; z-index: 9999; display: flex;
+    align-items: center; justify-content: center;
+    background: var(--bg-deep); }
+  .login-card { width: 360px; padding: 48px 36px 40px; background: var(--bg-raised);
+    border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.06); }
+  .login-logo { text-align: center; margin-bottom: 36px; }
+  .login-logo .mark { font-size: 28px; font-weight: 700; letter-spacing: 6px;
+    color: var(--accent); font-family: 'SF Mono', 'Fira Code', monospace; }
+  .login-logo .sub { display: block; font-size: 11px; color: var(--text-muted);
+    letter-spacing: 3px; margin-top: 6px; text-transform: uppercase; }
+  .login-input { width: 100%; padding: 12px 16px; background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary);
+    font-size: 14px; outline: none; transition: border-color 0.2s; }
+  .login-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .login-input.shake { animation: shake 0.4s; }
+  .login-btn { width: 100%; margin-top: 16px; padding: 11px; background: var(--accent);
+    color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: background 0.2s; letter-spacing: 1px; }
+  .login-btn:hover { background: var(--accent-hover); }
+  .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .login-error { text-align: center; color: var(--danger); font-size: 13px; margin-top: 12px; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .app-header { background: var(--bg-raised); border-bottom: 1px solid var(--border);
+    padding: 0 28px; height: 52px; display: flex; align-items: center;
+    justify-content: space-between; position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  .app-header .logo { font-size: 15px; font-weight: 600; letter-spacing: 3px;
+    font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text-primary); }
+  .app-header .logo span { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-muted); }
+
+  /* ── Main Layout ────────────────────────────────────── */
+  .main-content { max-width: 1440px; margin: 0 auto; padding: 24px 28px; }
+
+  /* ── Project List ───────────────────────────────────── */
+  .section-title { font-size: 13px; font-weight: 500; color: var(--text-secondary);
+    letter-spacing: 2px; text-transform: uppercase; margin-bottom: 18px; }
+  .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 14px; }
+  .project-card { background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px; cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+    position: relative; overflow: hidden; }
+  .project-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 3px; background: var(--accent); opacity: 0; transition: opacity 0.2s; }
+  .project-card:hover { border-color: var(--accent-border); transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+  .project-card:hover::before { opacity: 1; }
+  .project-card .card-head { display: flex; justify-content: space-between; align-items: center; }
+  .project-card .card-head strong { font-size: 15px; color: var(--text-primary); }
+  .project-card .topic { color: var(--text-secondary); font-size: 13px; margin-top: 8px;
+    line-height: 1.5; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .project-card .meta-row { display: flex; gap: 16px; margin-top: 12px; font-size: 12px;
+    color: var(--text-muted); }
+  .project-card .meta-row .val { color: var(--text-secondary); font-weight: 500; }
+  .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .runtime-pill { border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.2px; border: 1px solid var(--border); background: var(--bg-input);
+    color: var(--text-secondary); }
+  .runtime-pill.ok { background: var(--success-dim); border-color: rgba(45,157,74,0.18); color: var(--success); }
+  .runtime-pill.warn { background: rgba(192,138,26,0.08); border-color: rgba(192,138,26,0.2); color: var(--warning); }
+  .runtime-pill.muted { color: var(--text-muted); }
+  .system-panel { margin-bottom: 18px; }
+
+  /* ── Detail Header ──────────────────────────────────── */
+  .detail-header { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .detail-header h2 { font-size: 18px; font-weight: 600; }
+  .detail-topic { color: var(--text-secondary); font-size: 13px; margin-bottom: 20px; line-height: 1.6; }
+
+  /* ── Pipeline ───────────────────────────────────────── */
+  .pipeline-bar { display: flex; gap: 3px; margin: 0 0 22px; overflow-x: auto; padding: 2px 0; }
+  .pipeline-step { flex: 1; min-width: 44px; padding: 5px 3px; text-align: center;
+    font-size: 9px; letter-spacing: 0.3px; border-radius: 4px;
+    white-space: nowrap; transition: all 0.3s; font-weight: 500; }
+  .pipeline-step.completed { background: var(--success-dim); color: var(--success); }
+  .pipeline-step.active { background: var(--accent-dim); color: var(--accent); font-weight: 600;
+    box-shadow: 0 0 0 1px var(--accent-border); animation: pulse-light 2.5s ease-in-out infinite; }
+  .pipeline-step.future { background: var(--bg-input); color: var(--text-muted); }
+  @keyframes pulse-light { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+  /* ── Stats ──────────────────────────────────────────── */
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin: 18px 0; }
+  .stat-card { background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+  .stat-card .value { font-size: 26px; font-weight: 700; color: var(--text-primary);
+    font-family: 'SF Mono', 'Fira Code', monospace; }
+  .stat-card .label { font-size: 11px; color: var(--text-muted); margin-top: 4px;
+    letter-spacing: 0.5px; text-transform: uppercase; }
+
+  /* ── Research Outputs ───────────────────────────────── */
+  .outputs-layout { display: flex; gap: 16px; height: calc(100vh - 300px); min-height: 500px; }
+  .outputs-sidebar { width: 300px; flex-shrink: 0; overflow-y: auto; }
+  .outputs-viewer { flex: 1; background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px; overflow: auto; }
+  .output-iter { background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; }
+  .output-iter.current { border-color: var(--accent-border); }
+  .output-iter .iter-label { font-size: 11px; font-weight: 600; color: var(--text-muted);
+    letter-spacing: 1px; text-transform: uppercase; margin-bottom: 10px; }
+  .output-iter .iter-label .current-tag { color: var(--accent); margin-left: 6px; font-size: 10px; }
+  .output-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-secondary);
+    transition: all 0.15s; margin-bottom: 2px; }
+  .output-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .output-item.active { background: var(--accent-dim); color: var(--accent); }
+  .output-item .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .output-item .dot.idea { background: var(--accent); }
+  .output-item .dot.paper { background: var(--success); }
+  .output-item .dot.pdf { background: var(--info); }
+  .output-item.disabled { color: var(--text-muted); cursor: default; opacity: 0.4; }
+  .output-item.disabled:hover { background: none; color: var(--text-muted); }
+
+  /* ── Artifact Browser ───────────────────────────────── */
+  .artifact-layout { display: flex; gap: 16px; height: calc(100vh - 300px); min-height: 500px; }
+  .artifact-tree { width: 280px; flex-shrink: 0; overflow-y: auto; background: var(--bg-raised);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .artifact-viewer { flex: 1; background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px; overflow: auto; }
+  .tree-item { padding: 5px 10px; cursor: pointer; border-radius: 5px; font-size: 13px;
+    display: flex; align-items: center; gap: 6px; color: var(--text-secondary); transition: all 0.15s; }
+  .tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .tree-item.active { background: var(--accent-dim); color: var(--accent); }
+  .tree-item.dir { font-weight: 500; color: var(--text-primary); }
+  .breadcrumb-nav { margin-bottom: 10px; }
+
+  /* ── Markdown ───────────────────────────────────────── */
+  .md-body { line-height: 1.8; color: var(--text-primary); }
+  .md-body h1,.md-body h2,.md-body h3 { margin: 20px 0 10px; color: var(--text-primary); }
+  .md-body h1 { font-size: 22px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .md-body h2 { font-size: 18px; }
+  .md-body h3 { font-size: 15px; }
+  .md-body p { margin: 8px 0; }
+  .md-body code { background: #fdf3ed; padding: 2px 6px; border-radius: 4px;
+    font-size: 13px; color: var(--accent); font-family: 'SF Mono','Fira Code',monospace; }
+  .md-body pre { background: var(--bg-input); border: 1px solid var(--border);
+    padding: 14px; border-radius: 6px; overflow-x: auto; margin: 12px 0; }
+  .md-body pre code { background: none; padding: 0; color: var(--text-primary); }
+  .md-body table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  .md-body th,.md-body td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  .md-body th { background: var(--bg-input); color: var(--text-secondary); font-weight: 500; }
+  .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 14px;
+    color: var(--text-secondary); margin: 10px 0; }
+  .md-body ul,.md-body ol { padding-left: 24px; margin: 8px 0; }
+  .md-body img { max-width: 100%; border-radius: 6px; }
+  .md-body a { color: var(--accent); text-decoration: none; }
+  .md-body a:hover { text-decoration: underline; }
+  .md-body hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+  /* ── PDF / JSON ─────────────────────────────────────── */
+  .pdf-viewer { width: 100%; height: 100%; min-height: 600px; border: none; border-radius: 4px; }
+  .json-viewer { font-family: 'SF Mono','Fira Code',monospace; font-size: 13px;
+    white-space: pre-wrap; word-break: break-all; line-height: 1.6; color: var(--text-primary); }
+
+  /* ── Events ─────────────────────────────────────────── */
+  .event-row { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px; align-items: baseline; }
+  .event-time { color: var(--text-muted); white-space: nowrap; min-width: 72px;
+    font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; }
+  .event-type { font-weight: 500; min-width: 110px; }
+  .event-type.stage_start { color: var(--info); }
+  .event-type.stage_end { color: var(--success); }
+  .event-type.agent_start { color: var(--accent); }
+  .event-type.agent_end { color: var(--success); }
+  .event-type.error { color: var(--danger); }
+  .event-detail { color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── Chart ──────────────────────────────────────────── */
+  .chart-container { position: relative; height: 240px; background: var(--bg-raised);
+    border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+
+  /* ── Experiments ────────────────────────────────────── */
+  .gpu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 8px; margin: 12px 0; }
+  .gpu-slot { padding: 12px; border-radius: 8px; text-align: center; font-size: 12px;
+    font-weight: 600; border: 1px solid var(--border); }
+  .gpu-slot.idle { background: var(--success-dim); color: var(--success); }
+  .gpu-slot.busy { background: var(--accent-dim); color: var(--accent); }
+  .runtime-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .runtime-item { background: var(--bg-input); border: 1px solid var(--border-light); border-radius: 8px; padding: 12px; }
+  .runtime-item .k { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .runtime-item .v { margin-top: 6px; font-size: 14px; color: var(--text-primary); font-weight: 600; }
+  .runtime-path { margin-top: 10px; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .runtime-path code { background: #fdf3ed; border-radius: 4px; padding: 2px 6px; color: var(--accent); }
+  .warning-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .warning-chip { background: rgba(208,64,64,0.08); color: var(--danger); border: 1px solid rgba(208,64,64,0.18);
+    border-radius: 999px; padding: 4px 10px; font-size: 11px; }
+
+  /* ── Empty State ────────────────────────────────────── */
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 13px; }
+
+  /* ── Element Plus overrides ─────────────────────────── */
+  .el-card { background: var(--bg-raised); border-color: var(--border);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+  .el-card__header { border-bottom-color: var(--border); color: var(--text-primary);
+    padding: 14px 18px; font-size: 13px; font-weight: 500; }
+  .el-card__body { padding: 16px 18px; }
+  .el-tabs__item { font-size: 13px !important; letter-spacing: 0.3px; }
+  .el-tabs__active-bar { background-color: var(--accent) !important; }
+  .el-tabs__item.is-active { color: var(--accent) !important; }
+  .el-table { --el-table-bg-color: var(--bg-raised); --el-table-tr-bg-color: var(--bg-raised);
+    --el-table-header-bg-color: var(--bg-input); --el-table-border-color: var(--border); }
+  .el-breadcrumb__inner { color: var(--text-secondary) !important; font-size: 13px; }
+  .el-breadcrumb__inner:hover { color: var(--accent) !important; }
+
+  /* ── Responsive ─────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .project-grid { grid-template-columns: 1fr; }
+    .artifact-layout, .outputs-layout { flex-direction: column; height: auto; }
+    .artifact-tree, .outputs-sidebar { width: 100%; max-height: 240px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Login Overlay -->
+  <div v-if="authRequired && !authenticated" class="login-overlay">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="mark">SIBYL</div>
+        <span class="sub">Research System</span>
+      </div>
+      <input type="password" v-model="authKey" placeholder="Access Key"
+             @keyup.enter="login" class="login-input" :class="{shake: loginError}" autofocus />
+      <button @click="login" class="login-btn" :disabled="loginLoading">
+        {{ loginLoading ? 'Verifying...' : 'ACCESS' }}
+      </button>
+      <div v-if="loginError" class="login-error">Invalid key</div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="app-header" v-show="authenticated || !authRequired">
+    <div class="logo"><span>SIBYL</span></div>
+    <div class="header-right">
+      <span v-if="polling" style="font-family:monospace;">{{ pollCountdown }}s</span>
+      <el-switch v-model="polling" active-text="Auto" size="small" />
+      <el-button size="small" @click="refresh" :loading="loading" circle>
+        <span style="font-size:14px">&#x21bb;</span>
+      </el-button>
+    </div>
+  </div>
+
+  <div class="main-content" v-show="authenticated || !authRequired">
+    <!-- Project List View -->
+    <template v-if="!activeProject">
+      <div class="section-title">Research Projects</div>
+      <el-card v-if="systemStatus" class="system-panel">
+        <template #header>System Runtime</template>
+        <div class="stats-row" style="margin:0 0 12px;">
+          <div class="stat-card">
+            <div class="value">{{ systemStatus.project_count }}</div>
+            <div class="label">Projects</div>
+          </div>
+          <div class="stat-card">
+            <div class="value" style="color:var(--success)">{{ systemStatus.runtime_ready_count }}</div>
+            <div class="label">Runtime Ready</div>
+          </div>
+          <div class="stat-card">
+            <div class="value" :style="{color: systemStatus.migration_needed_count ? 'var(--warning)' : 'var(--success)'}">
+              {{ systemStatus.migration_needed_count }}
+            </div>
+            <div class="label">Need Migration</div>
+          </div>
+          <div class="stat-card">
+            <div class="value">{{ systemStatus.skill_count }}</div>
+            <div class="label">Skills</div>
+          </div>
+          <div class="stat-card">
+            <div class="value">{{ systemStatus.tool_count }}</div>
+            <div class="label">Repo Tools</div>
+          </div>
+          <div class="stat-card">
+            <div class="value">{{ systemStatus.evolution_lesson_count }}</div>
+            <div class="label">Evolution</div>
+          </div>
+        </div>
+        <div class="runtime-path"><strong>System</strong> <code>{{ systemStatus.system_root }}</code></div>
+        <div class="runtime-path"><strong>Workspaces</strong> <code>{{ systemStatus.workspaces_dir }}</code></div>
+        <div class="runtime-path"><strong>Tools</strong> <code>{{ systemStatus.tools_dir }}</code></div>
+        <div class="runtime-path"><strong>Evolution</strong> <code>{{ systemStatus.evolution_dir }}</code></div>
+        <div v-if="systemStatus.tool_names && systemStatus.tool_names.length" class="badge-row">
+          <span v-for="toolName in systemStatus.tool_names" :key="toolName" class="runtime-pill ok">
+            tool/{{ toolName }}
+          </span>
+        </div>
+      </el-card>
+      <div v-if="projects.length === 0 && !loading" class="empty-state">No projects found</div>
+      <div class="project-grid">
+        <div v-for="p in projects" :key="p.name" class="project-card" @click="openProject(p.name)">
+          <div class="card-head">
+            <strong>{{ p.name }}</strong>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+              <el-tag :type="stageTagType(p.stage)" size="small" effect="plain">{{ formatStage(p.stage) }}</el-tag>
+              <el-tag :type="p.migration_needed ? 'warning' : (p.runtime_ready ? 'success' : 'info')" size="small" effect="plain">
+                {{ p.migration_needed ? 'Needs Migration' : 'Layered Runtime' }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="topic">{{ p.topic || 'No topic set' }}</div>
+          <div class="badge-row">
+            <span :class="['runtime-pill', p.runtime?.project_memory_exists ? 'ok' : 'warn']">Memory</span>
+            <span :class="['runtime-pill', (p.runtime?.project_overlay_count || 0) > 0 ? 'ok' : 'muted']">
+              Overlays {{ p.runtime?.project_overlay_count || 0 }}
+            </span>
+            <span :class="['runtime-pill', p.runtime?.config_exists ? 'ok' : 'warn']">Config</span>
+            <span :class="['runtime-pill', p.runtime?.spec_exists ? 'ok' : 'warn']">Spec</span>
+            <span :class="['runtime-pill', p.runtime?.git_initialized ? 'ok' : 'warn']">Git</span>
+          </div>
+          <div class="meta-row">
+            <span>Iter <span class="val">{{ p.iteration }}</span></span>
+            <span><span class="val">{{ p.total_files }}</span> files</span>
+            <span v-if="p.has_paper" style="color:var(--success)">Paper</span>
+            <span v-if="p.errors > 0" style="color:var(--danger)">{{ p.errors }} errors</span>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Project Detail View -->
+    <template v-else>
+      <div class="detail-header">
+        <el-button @click="closeProject" size="small" plain>&larr; Back</el-button>
+        <h2>{{ activeProject }}</h2>
+        <el-tag v-if="dashboard" :type="stageTagType(dashboard.status.stage)" size="small" effect="plain">
+          {{ formatStage(dashboard.status.stage) }}
+        </el-tag>
+        <el-tag v-if="dashboard && dashboard.status.paused" type="warning" size="small" effect="plain">Paused</el-tag>
+        <el-tag v-if="dashboard && dashboard.status.stop_requested" type="danger" size="small" effect="plain">Stopped</el-tag>
+        <el-tag v-if="runtimeInfo" :type="runtimeInfo.migration_needed ? 'warning' : 'success'" size="small" effect="plain">
+          {{ runtimeInfo.migration_needed ? 'Needs Migration' : 'Layered Runtime' }}
+        </el-tag>
+      </div>
+      <div class="detail-topic" v-if="dashboard">{{ dashboard.status.topic }}</div>
+
+      <!-- Pipeline -->
+      <div class="pipeline-bar" v-if="dashboard">
+        <div v-for="s in dashboard.stages" :key="s"
+             :class="['pipeline-step', pipelineClass(s)]" :title="s">
+          {{ formatStage(s) }}
+        </div>
+      </div>
+
+      <el-tabs v-model="activeTab" @tab-change="onTabChange">
+        <!-- Overview -->
+        <el-tab-pane label="Overview" name="overview">
+          <template v-if="dashboard">
+            <div class="stats-row">
+              <div class="stat-card">
+                <div class="value">{{ dashboard.status.iteration }}</div>
+                <div class="label">Iteration</div>
+              </div>
+              <div class="stat-card">
+                <div class="value" style="color:var(--accent)">{{ latestScore }}</div>
+                <div class="label">Quality</div>
+              </div>
+              <div class="stat-card">
+                <div class="value">{{ dashboard.status.total_files }}</div>
+                <div class="label">Files</div>
+              </div>
+              <div class="stat-card">
+                <div class="value">{{ completedExperiments }}/{{ totalExperiments }}</div>
+                <div class="label">Experiments</div>
+              </div>
+              <div class="stat-card">
+                <div class="value" :style="{color: dashboard.errors.length > 0 ? 'var(--danger)' : 'var(--success)'}">
+                  {{ dashboard.errors.length }}
+                </div>
+                <div class="label">Errors</div>
+              </div>
+            </div>
+
+            <el-card v-if="runtimeInfo" style="margin-bottom:14px;">
+              <template #header>Runtime Composition</template>
+              <div class="runtime-grid">
+                <div class="runtime-item">
+                  <div class="k">Composition</div>
+                  <div class="v">{{ runtimeInfo.runtime_ready ? 'System + Project' : 'Needs Alignment' }}</div>
+                </div>
+                <div class="runtime-item">
+                  <div class="k">Project Memory</div>
+                  <div class="v">{{ runtimeInfo.project_memory_exists ? 'Loaded' : 'Missing' }}</div>
+                </div>
+                <div class="runtime-item">
+                  <div class="k">Prompt Overlays</div>
+                  <div class="v">{{ runtimeInfo.project_overlay_count || 0 }}</div>
+                </div>
+                <div class="runtime-item">
+                  <div class="k">Scaffold</div>
+                  <div class="v">{{ runtimeInfo.scaffold_ready ? 'Ready' : 'Incomplete' }}</div>
+                </div>
+                <div class="runtime-item">
+                  <div class="k">Config</div>
+                  <div class="v">{{ runtimeInfo.config_exists ? 'Present' : 'Missing' }}</div>
+                </div>
+                <div class="runtime-item">
+                  <div class="k">Spec</div>
+                  <div class="v">{{ runtimeInfo.spec_exists ? 'Present' : 'Missing' }}</div>
+                </div>
+              </div>
+              <div class="badge-row">
+                <span :class="['runtime-pill', runtimeInfo.links?.agents ? 'ok' : 'warn']">agents link</span>
+                <span :class="['runtime-pill', runtimeInfo.links?.skills ? 'ok' : 'warn']">skills link</span>
+                <span :class="['runtime-pill', runtimeInfo.links?.settings ? 'ok' : 'warn']">settings link</span>
+                <span :class="['runtime-pill', runtimeInfo.links?.venv ? 'ok' : 'warn']">venv link</span>
+                <span :class="['runtime-pill', runtimeInfo.git_initialized ? 'ok' : 'warn']">git</span>
+              </div>
+              <div class="runtime-path"><strong>System root</strong> <code>{{ runtimeInfo.system_root || '-' }}</code></div>
+              <div class="runtime-path"><strong>Project memory</strong> <code>{{ runtimeInfo.project_memory_path }}</code></div>
+              <div class="runtime-path"><strong>Effective CLAUDE</strong> <code>{{ runtimeInfo.claude_md_path }}</code></div>
+              <div v-if="runtimeInfo.warnings && runtimeInfo.warnings.length" class="warning-list">
+                <span v-for="warning in runtimeInfo.warnings" :key="warning" class="warning-chip">{{ warning }}</span>
+              </div>
+            </el-card>
+
+            <div class="chart-container" v-if="dashboard.quality_trend.length > 0" style="margin-bottom:14px;">
+              <canvas ref="qualityChart"></canvas>
+            </div>
+            <div class="chart-container" v-if="dashboard.stage_durations.length > 0" style="margin-bottom:14px;">
+              <canvas ref="durationChart"></canvas>
+            </div>
+
+            <el-card v-if="dashboard.agent_summary.length > 0" style="margin-bottom:14px;">
+              <template #header>Agent Activity</template>
+              <el-table :data="dashboard.agent_summary.slice(-20).reverse()" size="small" max-height="280">
+                <el-table-column prop="agent" label="Agent" width="180" />
+                <el-table-column prop="stage" label="Stage" width="140" />
+                <el-table-column prop="iteration" label="Iter" width="55" />
+                <el-table-column label="Duration" width="90">
+                  <template #default="{row}">{{ formatDuration(row.duration_sec) }}</template>
+                </el-table-column>
+                <el-table-column prop="status" label="Status" width="80">
+                  <template #default="{row}">
+                    <el-tag :type="row.status==='ok'?'success':'danger'" size="small" effect="plain">{{ row.status }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="output_summary" label="Summary" show-overflow-tooltip />
+              </el-table>
+            </el-card>
+
+            <el-card v-if="dashboard.errors.length > 0">
+              <template #header><span style="color:var(--danger)">Recent Errors</span></template>
+              <div v-for="(err, i) in dashboard.errors.slice(-10).reverse()" :key="i"
+                   style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
+                <span style="color:var(--text-muted);font-family:monospace;font-size:12px;">{{ formatTime(err.ts || err.timestamp) }}</span>
+                <span style="margin-left:10px;color:var(--text-secondary);">{{ err.error || err.message || JSON.stringify(err) }}</span>
+              </div>
+            </el-card>
+          </template>
+        </el-tab-pane>
+
+        <!-- Research Output -->
+        <el-tab-pane label="Research Output" name="outputs">
+          <div class="outputs-layout">
+            <div class="outputs-sidebar">
+              <div v-if="outputs.iterations.length === 0 && !outputs.root.idea && !outputs.root.paper_md"
+                   class="empty-state" style="padding:40px 10px;">No research outputs yet</div>
+
+              <!-- Root-level outputs (non-iteration mode) -->
+              <div v-if="outputs.root.idea || outputs.root.paper_md" class="output-iter current">
+                <div class="iter-label">Current</div>
+                <div v-if="outputs.root.idea" class="output-item"
+                     :class="{active: outputSelected === outputs.root.idea.path}"
+                     @click="openOutput(outputs.root.idea.path)">
+                  <span class="dot idea"></span> Proposal
+                </div>
+                <div v-if="outputs.root.paper_md" class="output-item"
+                     :class="{active: outputSelected === outputs.root.paper_md.path}"
+                     @click="openOutput(outputs.root.paper_md.path)">
+                  <span class="dot paper"></span> Paper
+                </div>
+              </div>
+
+              <!-- Per-iteration outputs -->
+              <div v-for="iter in outputs.iterations" :key="iter.number"
+                   :class="['output-iter', {current: iter.number === currentIteration}]">
+                <div class="iter-label">
+                  Iteration {{ iter.number }}
+                  <span v-if="iter.number === currentIteration" class="current-tag">current</span>
+                </div>
+                <div v-if="iter.idea" class="output-item"
+                     :class="{active: outputSelected === iter.idea.path}"
+                     @click="openOutput(iter.idea.path)">
+                  <span class="dot idea"></span> {{ iter.idea.name }}
+                </div>
+                <div v-else class="output-item disabled"><span class="dot idea"></span> No proposal</div>
+                <div v-if="iter.paper_md" class="output-item"
+                     :class="{active: outputSelected === iter.paper_md.path}"
+                     @click="openOutput(iter.paper_md.path)">
+                  <span class="dot paper"></span> {{ iter.paper_md.name }}
+                </div>
+                <div v-else class="output-item disabled"><span class="dot paper"></span> No paper</div>
+                <div v-if="iter.paper_pdf" class="output-item"
+                     :class="{active: outputSelected === iter.paper_pdf.path}"
+                     @click="openOutput(iter.paper_pdf.path)">
+                  <span class="dot pdf"></span> {{ iter.paper_pdf.name }}
+                </div>
+              </div>
+            </div>
+
+            <div class="outputs-viewer">
+              <template v-if="!outputSelected">
+                <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:13px;">
+                  Select an idea or paper to preview
+                </div>
+              </template>
+              <template v-else>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                  <span style="font-size:13px;color:var(--text-secondary);">{{ outputSelected }}</span>
+                  <el-button size="small" plain @click="outputSelected=null;outputContent=''">Close</el-button>
+                </div>
+                <div v-if="isMarkdown(outputSelected)" class="md-body" v-html="outputRendered"></div>
+                <iframe v-else-if="isPdf(outputSelected)" class="pdf-viewer" :src="fileUrl(outputSelected)"></iframe>
+                <pre v-else style="white-space:pre-wrap;font-size:13px;line-height:1.6;">{{ outputContent }}</pre>
+              </template>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- Artifacts -->
+        <el-tab-pane label="Artifacts" name="artifacts">
+          <div class="artifact-layout">
+            <div class="artifact-tree">
+              <div class="breadcrumb-nav">
+                <el-breadcrumb separator="/">
+                  <el-breadcrumb-item @click="browseDir('')" style="cursor:pointer;">
+                    <strong>{{ activeProject }}</strong>
+                  </el-breadcrumb-item>
+                  <el-breadcrumb-item v-for="(seg, i) in currentDirParts" :key="i"
+                    @click="browseDir(currentDirParts.slice(0, i+1).join('/'))" style="cursor:pointer;">
+                    {{ seg }}
+                  </el-breadcrumb-item>
+                </el-breadcrumb>
+              </div>
+              <div v-for="d in fileListing.dirs" :key="d.path" class="tree-item dir"
+                   @click="browseDir(d.path)">
+                &#128193; {{ d.name }}
+              </div>
+              <div v-for="f in fileListing.files" :key="f.path"
+                   :class="['tree-item', {active: selectedFile === f.path}]"
+                   @click="openFile(f)">
+                {{ fileIcon(f.ext) }} {{ f.name }}
+                <span style="margin-left:auto;color:var(--text-muted);font-size:11px;">{{ formatSize(f.size) }}</span>
+              </div>
+              <div v-if="fileListing.dirs.length === 0 && fileListing.files.length === 0"
+                   class="empty-state" style="padding:24px 10px;">Empty directory</div>
+            </div>
+
+            <div class="artifact-viewer">
+              <template v-if="!selectedFile">
+                <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:13px;">
+                  Select a file to preview
+                </div>
+              </template>
+              <template v-else>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                  <span style="font-size:13px;color:var(--text-secondary);">{{ selectedFile }}</span>
+                  <el-button size="small" plain @click="selectedFile=null">Close</el-button>
+                </div>
+                <div v-if="isMarkdown(selectedFile)" class="md-body" v-html="renderedMarkdown"></div>
+                <iframe v-else-if="isPdf(selectedFile)" class="pdf-viewer" :src="fileUrl(selectedFile)"></iframe>
+                <img v-else-if="isImage(selectedFile)" :src="fileUrl(selectedFile)" style="max-width:100%;border-radius:6px;" />
+                <pre v-else-if="isJson(selectedFile)" class="json-viewer">{{ formattedJson }}</pre>
+                <pre v-else style="white-space:pre-wrap;font-size:13px;line-height:1.6;">{{ fileContent }}</pre>
+              </template>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- Events -->
+        <el-tab-pane label="Events" name="events">
+          <el-card v-if="dashboard">
+            <template #header>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span>Event Timeline ({{ dashboard.recent_events.length }})</span>
+                <el-select v-model="eventFilter" size="small" clearable placeholder="Filter" style="width:160px;">
+                  <el-option v-for="t in eventTypes" :key="t" :label="t" :value="t" />
+                </el-select>
+              </div>
+            </template>
+            <div v-for="(ev, i) in filteredEvents" :key="i" class="event-row">
+              <span class="event-time">{{ formatTime(ev.ts) }}</span>
+              <span :class="['event-type', ev.event]">{{ ev.event }}</span>
+              <span class="event-detail">
+                <template v-if="ev.stage">stage={{ ev.stage }}</template>
+                <template v-if="ev.agent"> agent={{ ev.agent }}</template>
+                <template v-if="ev.iteration !== undefined"> iter={{ ev.iteration }}</template>
+                <template v-if="ev.duration_sec"> {{ formatDuration(ev.duration_sec) }}</template>
+                <template v-if="ev.score"> score={{ ev.score }}</template>
+                <template v-if="ev.message"> {{ ev.message }}</template>
+                <template v-if="ev.output_summary"> {{ ev.output_summary }}</template>
+              </span>
+            </div>
+            <div v-if="filteredEvents.length === 0" class="empty-state">No events</div>
+          </el-card>
+        </el-tab-pane>
+
+        <!-- Experiments -->
+        <el-tab-pane label="Experiments" name="experiments">
+          <template v-if="dashboard && dashboard.experiment_progress">
+            <el-card style="margin-bottom:14px;" v-if="gpuProgress">
+              <template #header>GPU / Task Status</template>
+              <div class="stats-row" style="margin:0;">
+                <div class="stat-card">
+                  <div class="value" style="color:var(--success)">{{ gpuProgress.completed.length }}</div>
+                  <div class="label">Completed</div>
+                </div>
+                <div class="stat-card">
+                  <div class="value" style="color:var(--accent)">{{ gpuProgress.running.length }}</div>
+                  <div class="label">Running</div>
+                </div>
+              </div>
+            </el-card>
+
+            <el-card v-if="experimentTasks.length > 0" style="margin-bottom:14px;">
+              <template #header>Experiment Tasks</template>
+              <el-table :data="experimentTasks" size="small">
+                <el-table-column prop="id" label="Task ID" width="180" />
+                <el-table-column prop="status" label="Status" width="110">
+                  <template #default="{row}">
+                    <el-tag :type="taskStatusType(row.status)" size="small" effect="plain">{{ row.status }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="GPU" width="90">
+                  <template #default="{row}">{{ row.gpu_ids ? row.gpu_ids.join(',') : '-' }}</template>
+                </el-table-column>
+                <el-table-column prop="registered_at" label="Registered" width="170" />
+                <el-table-column prop="completed_at" label="Completed" width="170" />
+              </el-table>
+            </el-card>
+
+            <el-card v-if="gpuProgress && Object.keys(gpuProgress.timings || {}).length > 0">
+              <template #header>Task Timings</template>
+              <el-table :data="timingRows" size="small">
+                <el-table-column prop="task" label="Task" width="180" />
+                <el-table-column label="Planned" width="90">
+                  <template #default="{row}">{{ row.planned_min }}m</template>
+                </el-table-column>
+                <el-table-column label="Actual" width="90">
+                  <template #default="{row}">
+                    <span :style="{color: row.actual_min > row.planned_min * 1.5 ? 'var(--danger)' : 'var(--success)'}">
+                      {{ row.actual_min ? row.actual_min.toFixed(1) + 'm' : '-' }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="start_time" label="Start" width="170" />
+                <el-table-column prop="end_time" label="End" width="170" />
+              </el-table>
+            </el-card>
+
+            <div v-if="!gpuProgress && experimentTasks.length === 0" class="empty-state">
+              No experiment data available
+            </div>
+          </template>
+          <div v-else class="empty-state">No experiment data</div>
+        </el-tab-pane>
+      </el-tabs>
+    </template>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, onMounted, onUnmounted, nextTick } = Vue;
+
+// Chart.js light theme
+Chart.defaults.color = '#5f6877';
+Chart.defaults.borderColor = '#e5e8ed';
+
+const app = createApp({
+  setup() {
+    // ── State ────────────────────────────────────────────
+    const projects = ref([]);
+    const systemStatus = ref(null);
+    const activeProject = ref(null);
+    const dashboard = ref(null);
+    const loading = ref(false);
+    const polling = ref(true);
+    const pollCountdown = ref(30);
+    const activeTab = ref('overview');
+
+    // Auth
+    const authRequired = ref(false);
+    const authenticated = ref(true);
+    const authKey = ref('');
+    const loginLoading = ref(false);
+    const loginError = ref(false);
+
+    // Research outputs
+    const outputs = ref({ iterations: [], root: {} });
+    const outputSelected = ref(null);
+    const outputContent = ref('');
+
+    // Artifact browser
+    const currentDir = ref('');
+    const fileListing = ref({ dirs: [], files: [] });
+    const selectedFile = ref(null);
+    const fileContent = ref('');
+
+    // Events filter
+    const eventFilter = ref('');
+
+    // Chart refs
+    const qualityChart = ref(null);
+    const durationChart = ref(null);
+    let qualityChartInstance = null;
+    let durationChartInstance = null;
+
+    // Poll timer
+    let countdownTimer = null;
+
+    // ── API ──────────────────────────────────────────────
+    const api = async (path) => {
+      const resp = await fetch(path);
+      if (resp.status === 401) {
+        authenticated.value = false;
+        authRequired.value = true;
+        throw new Error('Unauthorized');
+      }
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      return resp.json();
+    };
+
+    // ── Auth ─────────────────────────────────────────────
+    const checkAuth = async () => {
+      try {
+        const resp = await fetch('/api/auth/check');
+        const data = await resp.json();
+        authRequired.value = data.auth_required;
+        authenticated.value = data.ok;
+      } catch {
+        authenticated.value = true;
+        authRequired.value = false;
+      }
+    };
+
+    const login = async () => {
+      loginLoading.value = true;
+      loginError.value = false;
+      try {
+        const resp = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: authKey.value }),
+        });
+        if (resp.ok) {
+          authenticated.value = true;
+          authKey.value = '';
+          await Promise.all([fetchProjects(), fetchSystemStatus()]);
+        } else {
+          loginError.value = true;
+        }
+      } catch {
+        loginError.value = true;
+      } finally {
+        loginLoading.value = false;
+      }
+    };
+
+    // ── Data fetching ────────────────────────────────────
+    const fetchProjects = async () => {
+      try { projects.value = await api('/api/projects'); } catch {}
+    };
+
+    const fetchSystemStatus = async () => {
+      try { systemStatus.value = await api('/api/system/status'); } catch {}
+    };
+
+    const fetchDashboard = async () => {
+      if (!activeProject.value) return;
+      try {
+        dashboard.value = await api(`/api/projects/${activeProject.value}/dashboard?events_tail=100`);
+        await nextTick();
+        renderCharts();
+      } catch {}
+    };
+
+    const fetchOutputs = async () => {
+      if (!activeProject.value) return;
+      try { outputs.value = await api(`/api/projects/${activeProject.value}/outputs`); } catch {}
+    };
+
+    const fetchFiles = async (dir = '') => {
+      if (!activeProject.value) return;
+      try {
+        fileListing.value = await api(`/api/projects/${activeProject.value}/files?dir=${encodeURIComponent(dir)}`);
+        currentDir.value = dir;
+      } catch {}
+    };
+
+    const refresh = async () => {
+      loading.value = true;
+      try {
+        if (activeProject.value) {
+          await fetchDashboard();
+          if (activeTab.value === 'artifacts') await fetchFiles(currentDir.value);
+          if (activeTab.value === 'outputs') await fetchOutputs();
+        } else {
+          await Promise.all([fetchProjects(), fetchSystemStatus()]);
+        }
+      } finally {
+        loading.value = false;
+        if (polling.value) startPolling();
+      }
+    };
+
+    // ── Navigation ───────────────────────────────────────
+    const openProject = async (name) => {
+      activeProject.value = name;
+      window.location.hash = `#/project/${name}`;
+      loading.value = true;
+      try {
+        await Promise.all([fetchDashboard(), fetchFiles(''), fetchOutputs()]);
+      } finally { loading.value = false; }
+    };
+
+    const closeProject = () => {
+      if (qualityChartInstance) { qualityChartInstance.destroy(); qualityChartInstance = null; }
+      if (durationChartInstance) { durationChartInstance.destroy(); durationChartInstance = null; }
+      activeProject.value = null;
+      dashboard.value = null;
+      selectedFile.value = null;
+      outputSelected.value = null;
+      outputContent.value = '';
+      currentDir.value = '';
+      window.location.hash = '#/';
+      fetchProjects();
+      fetchSystemStatus();
+    };
+
+    const browseDir = (dir) => { selectedFile.value = null; fetchFiles(dir); };
+
+    const openFile = async (f) => {
+      selectedFile.value = f.path;
+      if (isPdf(f.path) || isImage(f.path)) return;
+      try {
+        const resp = await fetch(fileUrl(f.path));
+        fileContent.value = await resp.text();
+      } catch (e) { fileContent.value = `Error: ${e.message}`; }
+    };
+
+    const openOutput = async (path) => {
+      outputSelected.value = path;
+      if (isPdf(path)) return;
+      try {
+        const resp = await fetch(fileUrl(path));
+        outputContent.value = await resp.text();
+      } catch (e) { outputContent.value = `Error: ${e.message}`; }
+    };
+
+    // ── File utils ───────────────────────────────────────
+    const fileUrl = (path) => `/api/projects/${activeProject.value}/file?path=${encodeURIComponent(path)}`;
+    const isMarkdown = (p) => p && p.endsWith('.md');
+    const isPdf = (p) => p && p.endsWith('.pdf');
+    const isImage = (p) => p && /\.(png|jpg|jpeg|svg|gif)$/i.test(p);
+    const isJson = (p) => p && /\.(json|jsonl)$/i.test(p);
+
+    const fileIcon = (ext) => {
+      const icons = { '.md':'&#x1F4C4;', '.pdf':'&#x1F4D5;', '.json':'&#x1F4CB;', '.jsonl':'&#x1F4CB;',
+        '.py':'&#x1F40D;', '.tex':'&#x1F4DD;', '.png':'&#x1F5BC;', '.jpg':'&#x1F5BC;', '.svg':'&#x1F5BC;',
+        '.sh':'&#x2699;', '.yaml':'&#x2699;', '.yml':'&#x2699;', '.txt':'&#x1F4C3;' };
+      return icons[ext] || '&#x1F4C4;';
+    };
+
+    const currentDirParts = computed(() => currentDir.value ? currentDir.value.split('/') : []);
+
+    const renderedMarkdown = computed(() => {
+      if (!isMarkdown(selectedFile.value) || !fileContent.value) return '';
+      try { return DOMPurify.sanitize(marked.parse(fileContent.value)); }
+      catch { return DOMPurify.sanitize(`<pre>${fileContent.value}</pre>`); }
+    });
+
+    const outputRendered = computed(() => {
+      if (!isMarkdown(outputSelected.value) || !outputContent.value) return '';
+      try { return DOMPurify.sanitize(marked.parse(outputContent.value)); }
+      catch { return DOMPurify.sanitize(`<pre>${outputContent.value}</pre>`); }
+    });
+
+    const formattedJson = computed(() => {
+      if (!isJson(selectedFile.value) || !fileContent.value) return '';
+      try {
+        if (selectedFile.value.endsWith('.jsonl')) {
+          return fileContent.value.split('\n')
+            .filter(l => l.trim())
+            .map(l => { try { return JSON.stringify(JSON.parse(l), null, 2); } catch { return l; } })
+            .join('\n---\n');
+        }
+        return JSON.stringify(JSON.parse(fileContent.value), null, 2);
+      } catch { return fileContent.value; }
+    });
+
+    // ── Computed ─────────────────────────────────────────
+    const currentIteration = computed(() => dashboard.value?.status?.iteration || 0);
+    const runtimeInfo = computed(() => dashboard.value?.runtime || dashboard.value?.status?.runtime || null);
+
+    const latestScore = computed(() => {
+      if (!dashboard.value?.quality_trend?.length) return '-';
+      return dashboard.value.quality_trend[dashboard.value.quality_trend.length - 1].score?.toFixed(1) || '-';
+    });
+
+    const gpuProgress = computed(() => dashboard.value?.experiment_progress?.gpu_progress || null);
+    const completedExperiments = computed(() => gpuProgress.value?.completed?.length || 0);
+    const totalExperiments = computed(() => {
+      if (experimentTasks.value.length > 0) return experimentTasks.value.length;
+      if (!gpuProgress.value) return 0;
+      return (gpuProgress.value.completed?.length || 0) + (gpuProgress.value.running?.length || 0);
+    });
+
+    const experimentTasks = computed(() => {
+      const state = dashboard.value?.experiment_progress?.experiment_state;
+      if (!state?.tasks) return [];
+      return Object.entries(state.tasks).map(([id, t]) => ({ id, ...t }));
+    });
+
+    const timingRows = computed(() => {
+      if (!gpuProgress.value?.timings) return [];
+      return Object.entries(gpuProgress.value.timings).map(([task, t]) => ({ task, ...t }));
+    });
+
+    const eventTypes = computed(() => {
+      if (!dashboard.value?.recent_events) return [];
+      return [...new Set(dashboard.value.recent_events.map(e => e.event))].sort();
+    });
+
+    const filteredEvents = computed(() => {
+      if (!dashboard.value?.recent_events) return [];
+      let events = [...dashboard.value.recent_events].reverse();
+      if (eventFilter.value) events = events.filter(e => e.event === eventFilter.value);
+      return events;
+    });
+
+    // ── Formatters ───────────────────────────────────────
+    const formatTime = (ts) => {
+      if (!ts) return '-';
+      const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+      return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    const formatDuration = (sec) => {
+      if (sec == null) return '-';
+      if (sec < 60) return `${sec.toFixed(0)}s`;
+      if (sec < 3600) return `${(sec/60).toFixed(1)}m`;
+      return `${(sec/3600).toFixed(1)}h`;
+    };
+    const formatSize = (bytes) => {
+      if (bytes < 1024) return `${bytes}B`;
+      if (bytes < 1048576) return `${(bytes/1024).toFixed(1)}K`;
+      return `${(bytes/1048576).toFixed(1)}M`;
+    };
+    const formatStage = (s) => {
+      if (!s) return '';
+      return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).substring(0, 14);
+    };
+
+    const stageTagType = (stage) => {
+      if (stage === 'done') return 'success';
+      if (stage === 'init') return 'info';
+      if (stage?.includes('experiment')) return 'warning';
+      return '';
+    };
+    const taskStatusType = (s) => ({ completed:'success', running:'warning', pending:'info', failed:'danger' }[s] || 'info');
+
+    const pipelineClass = (stage) => {
+      if (!dashboard.value) return 'future';
+      const stages = dashboard.value.stages;
+      const ci = stages.indexOf(dashboard.value.status.stage);
+      const si = stages.indexOf(stage);
+      if (si < ci) return 'completed';
+      if (si === ci) return 'active';
+      return 'future';
+    };
+
+    // ── Charts ───────────────────────────────────────────
+    const renderCharts = () => {
+      if (!dashboard.value) return;
+
+      if (qualityChart.value && dashboard.value.quality_trend.length > 0) {
+        if (qualityChartInstance) qualityChartInstance.destroy();
+        const data = dashboard.value.quality_trend;
+        qualityChartInstance = new Chart(qualityChart.value, {
+          type: 'line',
+          data: {
+            labels: data.map(d => `Iter ${d.iteration}`),
+            datasets: [{
+              label: 'Quality Score', data: data.map(d => d.score),
+              borderColor: '#d4622b', backgroundColor: 'rgba(212,98,43,0.06)',
+              fill: true, tension: 0.3, pointRadius: 4, pointBackgroundColor: '#d4622b',
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { title: { display: true, text: 'Quality Trend', color: '#1a1f2b' },
+                       legend: { labels: { color: '#5f6877' } } },
+            scales: {
+              y: { min: 0, max: 10, title: { display: true, text: 'Score', color: '#5f6877' },
+                   grid: { color: '#eff0f3' }, ticks: { color: '#5f6877' } },
+              x: { grid: { color: '#eff0f3' }, ticks: { color: '#5f6877' } }
+            },
+          }
+        });
+      }
+
+      if (durationChart.value && dashboard.value.stage_durations.length > 0) {
+        if (durationChartInstance) durationChartInstance.destroy();
+        const iter = dashboard.value.status.iteration;
+        const data = dashboard.value.stage_durations.filter(d => d.iteration === iter);
+        if (data.length > 0) {
+          durationChartInstance = new Chart(durationChart.value, {
+            type: 'bar',
+            data: {
+              labels: data.map(d => formatStage(d.stage)),
+              datasets: [{
+                label: 'Duration (min)',
+                data: data.map(d => d.duration_sec ? (d.duration_sec / 60).toFixed(1) : 0),
+                backgroundColor: 'rgba(212,98,43,0.18)', borderColor: '#d4622b',
+                borderWidth: 1, borderRadius: 3,
+              }]
+            },
+            options: {
+              responsive: true, maintainAspectRatio: false,
+              plugins: { title: { display: true, text: `Stage Durations (Iter ${iter})`, color: '#1a1f2b' },
+                         legend: { labels: { color: '#5f6877' } } },
+              scales: {
+                y: { title: { display: true, text: 'Minutes', color: '#5f6877' },
+                     grid: { color: '#eff0f3' }, ticks: { color: '#5f6877' } },
+                x: { grid: { color: '#eff0f3' }, ticks: { color: '#5f6877', maxRotation: 45 } }
+              },
+            }
+          });
+        }
+      }
+    };
+
+    const onTabChange = (tab) => {
+      if (tab === 'artifacts' && fileListing.value.dirs.length === 0 && fileListing.value.files.length === 0) fetchFiles('');
+      if (tab === 'outputs' && outputs.value.iterations.length === 0) fetchOutputs();
+    };
+
+    // ── Polling ──────────────────────────────────────────
+    const startPolling = () => {
+      stopPolling();
+      pollCountdown.value = 30;
+      countdownTimer = setInterval(() => {
+        if (!polling.value) return;
+        pollCountdown.value--;
+        if (pollCountdown.value <= 0) refresh();
+      }, 1000);
+    };
+    const stopPolling = () => { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } };
+    watch(polling, (v) => { if (v) startPolling(); else stopPolling(); });
+
+    // ── Hash routing ─────────────────────────────────────
+    const handleHash = () => {
+      const match = window.location.hash.match(/^#\/project\/(.+)$/);
+      if (match && match[1] !== activeProject.value) openProject(decodeURIComponent(match[1]));
+      else if (!match && activeProject.value) closeProject();
+    };
+
+    // ── Lifecycle ────────────────────────────────────────
+    onMounted(async () => {
+      await checkAuth();
+      if (authenticated.value) {
+        await Promise.all([fetchProjects(), fetchSystemStatus()]);
+        handleHash();
+      }
+      window.addEventListener('hashchange', handleHash);
+      startPolling();
+    });
+
+    onUnmounted(() => {
+      stopPolling();
+      window.removeEventListener('hashchange', handleHash);
+      if (qualityChartInstance) qualityChartInstance.destroy();
+      if (durationChartInstance) durationChartInstance.destroy();
+    });
+
+    return {
+      projects, systemStatus, activeProject, dashboard, loading, polling, pollCountdown,
+      activeTab, currentDir, fileListing, selectedFile, fileContent,
+      eventFilter, qualityChart, durationChart,
+      authRequired, authenticated, authKey, loginLoading, loginError, login,
+      outputs, outputSelected, outputContent, outputRendered, currentIteration,
+      latestScore, runtimeInfo, gpuProgress, completedExperiments, totalExperiments,
+      experimentTasks, timingRows, eventTypes, filteredEvents,
+      currentDirParts, renderedMarkdown, formattedJson,
+      refresh, openProject, closeProject, browseDir, openFile, openOutput, onTabChange,
+      fileUrl, isMarkdown, isPdf, isImage, isJson, fileIcon,
+      formatTime, formatDuration, formatSize, formatStage,
+      stageTagType, taskStatusType, pipelineClass,
+    };
+  }
+});
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html>

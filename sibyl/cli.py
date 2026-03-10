@@ -60,6 +60,7 @@ Auxiliary commands:
   sibyl status <project>    Show detailed project status
   sibyl evolve              Trigger evolution analysis
   sibyl evolve --apply      Apply evolution patches
+  sibyl migrate --all       Align existing workspaces to layered runtime
 """,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -75,12 +76,40 @@ Auxiliary commands:
     evolve_p.add_argument("--reset", action="store_true", help="Remove all overlay files")
     evolve_p.add_argument("--show", action="store_true", help="Show current overlay contents")
 
+    # --- migrate ---
+    migrate_p = sub.add_parser("migrate", help="Migrate one or all workspaces to layered runtime")
+    migrate_p.add_argument("workspace", nargs="?", default=None, help="Workspace path")
+    migrate_p.add_argument("--all", action="store_true", help="Migrate all workspaces")
+    migrate_p.add_argument("--workspaces-dir", default=None, help="Override workspaces directory")
+
     # --- internal control-plane helpers ---
     dispatch_p = sub.add_parser("dispatch", help="Internal dynamic-dispatch helper")
     dispatch_p.add_argument("workspace", help="Workspace path")
 
     self_heal_p = sub.add_parser("self-heal-scan", help="Internal self-heal scan helper")
     self_heal_p.add_argument("workspace", nargs="?", default=None, help="Workspace path")
+
+    dashboard_p = sub.add_parser("dashboard", help="Web dashboard or JSON data dump")
+    dashboard_p.add_argument("workspace", nargs="?", default=None,
+                             help="Workspace path (omit to start web server)")
+    dashboard_p.add_argument("--tail", type=int, default=50, help="Number of recent events")
+    dashboard_p.add_argument("--port", type=int, default=7654, help="Web server port (default 7654)")
+    dashboard_p.add_argument("--host", default="127.0.0.1", help="Web server host")
+    dashboard_p.add_argument("--config", help="Path to config YAML")
+    dashboard_p.add_argument("--production", action="store_true",
+                             help="Use gunicorn production server")
+
+    log_agent_p = sub.add_parser("log-agent", help="Log agent invocation event")
+    log_agent_p.add_argument("workspace", help="Workspace path")
+    log_agent_p.add_argument("stage", help="Current pipeline stage")
+    log_agent_p.add_argument("agent", help="Agent name (e.g. sibyl-innovator)")
+    log_agent_p.add_argument("--event", default="start", choices=["start", "end"])
+    log_agent_p.add_argument("--model-tier", default="")
+    log_agent_p.add_argument("--status", default="ok")
+    log_agent_p.add_argument("--duration", type=float, default=None)
+    log_agent_p.add_argument("--output-files", default="")
+    log_agent_p.add_argument("--output-summary", default="")
+    log_agent_p.add_argument("--prompt-summary", default="")
 
     args = parser.parse_args()
 
@@ -92,6 +121,48 @@ Auxiliary commands:
     if args.command == "self-heal-scan":
         from sibyl.orchestrate import cli_self_heal_scan
         cli_self_heal_scan(args.workspace)
+        return
+
+    if args.command == "dashboard":
+        if args.workspace:
+            # JSON dump mode (legacy CLI behavior)
+            from sibyl.orchestrate import cli_dashboard_data
+            cli_dashboard_data(args.workspace, events_tail=args.tail)
+        else:
+            # Web server mode
+            from sibyl.dashboard.server import run
+            cfg = Config()
+            if hasattr(args, "config") and args.config:
+                cfg = Config.from_yaml(args.config)
+            run(port=args.port, host=args.host, config=cfg,
+                production=getattr(args, "production", False))
+        return
+
+    if args.command == "log-agent":
+        from sibyl.orchestrate import cli_log_agent
+        cli_log_agent(
+            workspace_path=args.workspace,
+            stage=args.stage,
+            agent_name=args.agent,
+            event=args.event,
+            model_tier=args.model_tier,
+            status=args.status,
+            duration_sec=args.duration,
+            output_files=args.output_files,
+            output_summary=args.output_summary,
+            prompt_summary=args.prompt_summary,
+        )
+        return
+
+    if args.command == "migrate":
+        from sibyl.orchestrate import cli_migrate, cli_migrate_all
+
+        if args.all:
+            cli_migrate_all(args.workspaces_dir)
+        elif args.workspace:
+            cli_migrate(args.workspace)
+        else:
+            raise SystemExit("Provide a workspace path or pass --all.")
         return
 
     config = Config()
@@ -214,7 +285,7 @@ def _evolve(apply: bool = False, reset: bool = False, show: bool = False):
         written = engine.generate_lessons_overlay()
         console.print(f"\n[bold green]Generated {len(written)} overlay file(s):[/bold green]")
         for agent_name in written:
-            console.print(f"  ~/.claude/sibyl_evolution/lessons/{agent_name}.md")
+            console.print(f"  {engine.EVOLUTION_DIR / 'lessons' / f'{agent_name}.md'}")
     else:
         console.print("[dim]Use --apply to generate overlay files, --show to view, --reset to clear.[/dim]")
 

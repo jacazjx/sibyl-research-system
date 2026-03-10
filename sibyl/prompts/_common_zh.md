@@ -42,6 +42,7 @@
 ├── idea/
 │   ├── proposal.md          # 最终综合提案
 │   ├── alternatives.md      # 备选方案（用于 pivot）
+│   ├── candidates.json      # 2-3 个候选 idea 池（pilot 前不要过早塌缩）
 │   ├── references.json      # [{title, authors, abstract, url, year}]
 │   ├── hypotheses.md        # 可检验假设
 │   ├── initial_ideas.md     # 用户初始想法
@@ -58,6 +59,8 @@
 │   ├── results/
 │   │   ├── pilots/          # 先导实验结果
 │   │   └── full/            # 完整实验结果
+│   │   ├── pilot_summary.md # 先导实验总结（给人看）
+│   │   └── pilot_summary.json # 先导实验结构化信号（给编排器/决策器）
 │   ├── logs/                # 执行日志
 │   └── experiment_db.jsonl  # 实验数据库
 ├── writing/
@@ -74,6 +77,8 @@
 ├── context/
 │   └── literature.md        # 文献调研报告（arXiv + Web，自动生成）
 ├── supervisor/              # 监督审查
+│   ├── idea_validation_decision.md   # pilot 后决定 ADVANCE / REFINE / PIVOT
+│   └── idea_validation_decision.json # 结构化 validation 决策
 ├── critic/                  # 批评反馈
 ├── reflection/              # 反思产出
 ├── codex/                   # Codex 独立审查结果
@@ -131,3 +136,43 @@
 - 标记可疑结果（简单方法 >30% 提升）
 - 保存样本输出，不仅仅是统计量
 - 诚实报告负面结果
+
+## Agent 执行日志 (CRITICAL)
+
+每个 agent **必须**在执行开始和结束时记录日志，用于监控 dashboard。
+
+### 开始时（第一步）
+
+在执行任何研究任务之前，立即运行：
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_log_agent; cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='start', model_tier='$AGENT_TIER')"
+```
+
+其中 `$WORKSPACE`、`$STAGE`、`$AGENT_NAME`、`$AGENT_TIER` 来自 SKILL.md 中定义的变量。如果 `$STAGE` 未提供，传空字符串（函数会自动从 status.json 读取）。
+
+### 结束时（最后一步）
+
+完成所有工作后（写完产出文件后），运行：
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "
+from sibyl.orchestrate import cli_log_agent
+cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='end', status='ok',
+              output_files='$OUTPUT_FILES',
+              output_summary='$OUTPUT_SUMMARY')
+"
+```
+
+- `$OUTPUT_FILES`: 逗号分隔的产出文件相对路径（如 `idea/perspectives/innovator.md`）
+- `$OUTPUT_SUMMARY`: 一句话概括你的产出（100字以内）
+
+### 异常处理
+
+如果执行过程中遇到错误导致无法完成，在退出前运行：
+
+```bash
+cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_log_agent; cli_log_agent('$WORKSPACE', '$STAGE', '$AGENT_NAME', event='end', status='error', output_summary='$ERROR_MESSAGE')"
+```
+
+**日志调用失败不应阻止主任务执行**。如果 cli_log_agent 报错，忽略错误继续正常工作。

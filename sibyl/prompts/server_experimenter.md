@@ -28,6 +28,7 @@
    - `{workspace}/plan/task_plan.json`
    - `{workspace}/plan/methodology.md`
    - `{workspace}/idea/proposal.md`
+   - `{workspace}/idea/candidates.json`（如存在；pilot 阶段按 `candidate_id` 汇总）
 
 2. 生成自包含的实验 prompt 文件 `experiment_prompt.md`，包含：
    - 完整的实验目标和方法描述
@@ -68,7 +69,13 @@ echo "EXPERIMENT_DONE"
 - 调试错误
 - 执行训练/评估
 - 收集结果到 `results.json`
+- PILOT 模式写出 `{workspace}/exp/results/pilot_summary.md` 与 `{workspace}/exp/results/pilot_summary.json`
 - **写入 DONE 标记文件**（见下方）
+
+`pilot_summary.json` 必须为结构化格式，至少包含：
+- `overall_recommendation`: `ADVANCE` | `REFINE` | `PIVOT`
+- `selected_candidate_id`: 当前最优候选
+- `candidates`: 每个候选的 `candidate_id`、`go_no_go`、`confidence`、`supported_hypotheses`、`failed_assumptions`、`key_metrics`
 
 ### 进程标识与进度上报（CRITICAL）
 

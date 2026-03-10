@@ -9,6 +9,8 @@ Usage (called by Skill via Bash):
 import json
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -16,7 +18,14 @@ from dataclasses import dataclass, asdict
 
 import yaml
 
+from sibyl._paths import REPO_ROOT, get_system_evolution_dir
 from sibyl.config import Config
+from sibyl.event_logger import EventLogger
+from sibyl.runtime_assets import (
+    detect_workspace_root,
+    load_project_memory,
+    load_project_prompt_overlay,
+)
 from sibyl.workspace import Workspace, workspace_status_from_data
 
 PAPER_SECTIONS = [
@@ -37,6 +46,17 @@ CHECKPOINT_DIRS = {
     "writing_sections": "writing/sections",
     "writing_critique": "writing/critique",
 }
+_RUNTIME_GITIGNORE_LINES = (
+    "*.pyc",
+    "__pycache__/",
+    ".DS_Store",
+    ".venv/",
+    "CLAUDE.md",
+    ".claude/agents",
+    ".claude/skills",
+    ".claude/settings.local.json",
+    ".sibyl/system.json",
+)
 
 _FIGURES_BLOCK_RE = re.compile(
     r"<!--\s*FIGURES\s*(.*?)-->",
@@ -133,7 +153,6 @@ def resolve_workspace_root(workspace_path: str | Path) -> Path:
 
 def build_repo_python_cli_command(*args: str | Path) -> str:
     """Build a shell-safe repo-local `python -m sibyl.cli ...` command."""
-    from sibyl._paths import REPO_ROOT
     cmd = shlex.join([sys.executable, "-m", "sibyl.cli", *(str(arg) for arg in args)])
     return f"cd {shlex.quote(str(REPO_ROOT))} && {cmd}"
 
@@ -195,7 +214,130 @@ def write_project_config(ws: Workspace, config: Config):
     )
 
 
-def load_prompt(agent_name: str, overlay_content: str | None = None) -> str:
+def _load_workspace_action_plan(
+    ws: Workspace,
+    rel_path: str = "reflection/action_plan.json",
+    *,
+    persist_normalized: bool = False,
+) -> dict | None:
+    """Load and normalize a reflection action plan if present."""
+    from sibyl.evolution import normalize_action_plan
+
+    raw = ws.read_file(rel_path)
+    if not raw:
+        return None
+    try:
+        action_plan = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    normalized = normalize_action_plan(action_plan)
+    if persist_normalized and normalized != action_plan:
+        ws.write_file(
+            rel_path,
+            json.dumps(normalized, indent=2, ensure_ascii=False),
+        )
+    return normalized
+
+
+def _load_prompt_evolution_context(
+    workspace_path: str | Path | None,
+) -> tuple[str, str, list[str]]:
+    """Collect workspace context for lesson filtering."""
+    from sibyl.evolution import normalize_action_plan
+
+    workspace_root = detect_workspace_root(workspace_path)
+    if workspace_root is None:
+        return "", "", []
+
+    workspace_root = resolve_workspace_root(workspace_root)
+    active_root = resolve_active_workspace_path(workspace_root)
+    stage = ""
+    topic = ""
+    recent_issues: list[str] = []
+    seen_issues: set[str] = set()
+
+    status_path = workspace_root / "status.json"
+    if status_path.exists():
+        try:
+            status_data = json.loads(status_path.read_text(encoding="utf-8"))
+            stage = str(status_data.get("stage", "") or "")
+        except (json.JSONDecodeError, OSError, TypeError):
+            stage = ""
+
+    for topic_path in (active_root / "topic.txt", workspace_root / "topic.txt"):
+        if topic_path.exists():
+            try:
+                topic = topic_path.read_text(encoding="utf-8").strip()
+            except OSError:
+                topic = ""
+            if topic:
+                break
+
+    plan_candidates = [
+        active_root / "reflection" / "action_plan.json",
+        active_root / "reflection" / "prev_action_plan.json",
+        workspace_root / "reflection" / "action_plan.json",
+        workspace_root / "reflection" / "prev_action_plan.json",
+    ]
+    for plan_path in plan_candidates:
+        if not plan_path.exists():
+            continue
+        try:
+            action_plan = normalize_action_plan(
+                json.loads(plan_path.read_text(encoding="utf-8"))
+            )
+        except (json.JSONDecodeError, OSError, TypeError):
+            continue
+        for issue in action_plan.get("issues_classified", []):
+            if issue.get("status") == "fixed":
+                continue
+            description = str(issue.get("description", "")).strip()
+            if description and description not in seen_issues:
+                seen_issues.add(description)
+                recent_issues.append(description)
+        if recent_issues:
+            break
+
+    return topic, stage, recent_issues
+
+
+def _load_evolution_overlay(
+    agent_name: str,
+    workspace_path: str | Path | None = None,
+) -> str:
+    """Load contextual lessons first, then fall back to the global overlay."""
+    from sibyl.evolution import EvolutionEngine
+
+    topic, stage, recent_issues = _load_prompt_evolution_context(workspace_path)
+    engine = EvolutionEngine()
+    if topic or stage or recent_issues:
+        contextual = engine.filter_relevant_lessons(
+            agent_name=agent_name,
+            topic=topic,
+            stage=stage,
+            recent_issues=recent_issues,
+        )
+        if contextual:
+            return contextual
+
+    overlay_path = get_system_evolution_dir() / "lessons" / f"{agent_name}.md"
+    if overlay_path.exists():
+        return overlay_path.read_text(encoding="utf-8")
+    return ""
+
+
+def _append_prompt_layer(base: str, content: str) -> str:
+    if content.strip():
+        return f"{base}\n\n---\n\n{content}"
+    return base
+
+
+def load_prompt(
+    agent_name: str,
+    overlay_content: str | None = None,
+    workspace_path: str | Path | None = None,
+) -> str:
     """Load an agent prompt from the prompts/ directory, with overlay injection.
 
     If overlay_content is provided (e.g. from filter_relevant_lessons),
@@ -207,21 +349,20 @@ def load_prompt(agent_name: str, overlay_content: str | None = None) -> str:
     base = path.read_text(encoding="utf-8")
 
     if overlay_content is not None:
-        if overlay_content.strip():
-            base += f"\n\n---\n\n{overlay_content}"
+        base = _append_prompt_layer(base, overlay_content)
     else:
-        # Global overlay (cross-project experience)
-        overlay_path = (
-            Path.home() / ".claude" / "sibyl_evolution" / "lessons" / f"{agent_name}.md"
-        )
-        if overlay_path.exists():
-            overlay = overlay_path.read_text(encoding="utf-8")
-            base += f"\n\n---\n\n{overlay}"
+        overlay = _load_evolution_overlay(agent_name, workspace_path)
+        if overlay:
+            base = _append_prompt_layer(base, overlay)
+
+    project_overlay = load_project_prompt_overlay(agent_name, workspace_path)
+    if project_overlay:
+        base = _append_prompt_layer(base, project_overlay)
 
     return base
 
 
-def load_common_prompt() -> str:
+def load_common_prompt(workspace_path: str | Path | None = None) -> str:
     """Load the common instructions prompt in the configured language.
 
     Reads SIBYL_LANGUAGE env var (set by plugin commands from action.language).
@@ -230,7 +371,11 @@ def load_common_prompt() -> str:
     import os
     lang = os.environ.get("SIBYL_LANGUAGE", "zh")
     filename = "_common_zh" if lang == "zh" else "_common"
-    return load_prompt(filename)
+    prompt = load_prompt(filename, workspace_path=workspace_path)
+    project_memory = load_project_memory(workspace_path)
+    if project_memory:
+        prompt = _append_prompt_layer(prompt, project_memory)
+    return prompt
 
 
 def cli_write_ralph_prompt(
@@ -248,7 +393,7 @@ def cli_write_ralph_prompt(
     if project_name is None:
         project_name = ws.name
 
-    template = load_prompt("ralph_loop")
+    template = load_prompt("ralph_loop", workspace_path=workspace_path)
     if not template:
         print(json.dumps({"error": "ralph_loop.md not found in prompts/"}))
         return
@@ -285,6 +430,7 @@ class Action:
     gpu_poll: dict | None = None  # for gpu_poll actions: {"ssh_connection", "query_cmd", "max_gpus", "threshold_mb", "interval_sec", "marker_file"}
     description: str = ""
     stage: str = ""
+    iteration: int = 0
     estimated_minutes: int = 0  # expected runtime hint for experiment batches
     checkpoint_info: dict | None = None  # {resuming, completed_steps, remaining_steps, all_complete}
     experiment_monitor: dict | None = None  # {script, marker_file, task_ids, timeout_minutes}
@@ -303,6 +449,7 @@ class FarsOrchestrator:
         "idea_debate",
         "planning",
         "pilot_experiments",
+        "idea_validation_decision",
         "experiment_cycle",
         "result_debate",
         "experiment_decision",
@@ -402,8 +549,8 @@ class FarsOrchestrator:
     def _codex_reviewer_args(self, mode: str, ws: str) -> str:
         """Build reviewer args with an optional model override."""
         if self.config.codex_model:
-            return pack_skill_args(mode, ws, self.config.codex_model)
-        return pack_skill_args(mode, ws)
+            return pack_skill_args(ws, mode, self.config.codex_model)
+        return pack_skill_args(ws, mode)
 
     def _codex_writer_args(self, ws: str) -> str:
         """Build Codex writer args with an optional model override."""
@@ -427,6 +574,7 @@ class FarsOrchestrator:
                 action_type="stopped",
                 description=f"{stopped_at}使用 /sibyl-research:resume 重新进入自治循环。",
                 stage=status.stage,
+                iteration=status.iteration,
             ))
 
         # Legacy pause markers should never stall the autonomous loop.
@@ -438,6 +586,8 @@ class FarsOrchestrator:
         topic = self.ws.read_file("topic.txt") or ""
 
         action = self._compute_action(stage, topic, status.iteration)
+        if action.iteration == 0:
+            action.iteration = status.iteration
 
         # Inject model tier info into legacy agents (cross-critique still uses this)
         if action.agents:
@@ -546,6 +696,9 @@ class FarsOrchestrator:
 
         elif stage == "pilot_experiments":
             return self._action_pilot_experiments(ws)
+
+        elif stage == "idea_validation_decision":
+            return self._action_idea_validation_decision(ws)
 
         elif stage == "experiment_cycle":
             return self._action_experiment_cycle(ws, iteration)
@@ -678,6 +831,16 @@ class FarsOrchestrator:
         initial_ideas = self.ws.read_file("idea/initial_ideas.md") or ""
         seed_refs = self.ws.read_file("idea/references_seed.md") or ""
         literature = self.ws.read_file("context/literature.md") or ""
+        prior_proposal = self.ws.read_file("idea/proposal.md") or ""
+        prior_hypotheses = self.ws.read_file("idea/hypotheses.md") or ""
+        pilot_summary = self.ws.read_file("exp/results/pilot_summary.md") or ""
+        pilot_summary_json = self.ws.read_file("exp/results/pilot_summary.json") or ""
+        candidate_ideas = self.ws.read_file("idea/candidates.json") or ""
+        validation_feedback = self.ws.read_file("supervisor/idea_validation_decision.md") or ""
+        validation_feedback_json = (
+            self.ws.read_file("supervisor/idea_validation_decision.json") or ""
+        )
+        validation_round = self._get_current_validation_round()
 
         extra_context = ""
         if spec:
@@ -688,15 +851,66 @@ class FarsOrchestrator:
             extra_context += f"\n\n## Seed References (from user)\n{seed_refs}"
         if literature:
             extra_context += f"\n\n## 文献调研报告（请仔细阅读，避免重复已有工作）\n{literature}"
+        if prior_proposal:
+            extra_context += (
+                "\n\n## 当前综合提案（如已有，请在此基础上迭代，而不是从零开始）\n"
+                f"{prior_proposal}"
+            )
+        if prior_hypotheses:
+            extra_context += f"\n\n## 当前可检验假设\n{prior_hypotheses}"
+        if pilot_summary:
+            extra_context += (
+                "\n\n## 小型实验真实反馈（必须基于这些证据修正 idea，不能忽略负结果）\n"
+                f"{pilot_summary}"
+            )
+        if pilot_summary_json:
+            extra_context += (
+                "\n\n## 小型实验结构化信号（供你提炼 go/no-go / confidence / hypothesis status）\n"
+                f"{pilot_summary_json}"
+            )
+        if candidate_ideas:
+            extra_context += (
+                "\n\n## 当前候选 idea 池（保留 2-3 个候选，必要时淘汰或替换）\n"
+                f"{candidate_ideas}"
+            )
+        if validation_feedback:
+            extra_context += (
+                "\n\n## 上一轮 validation 决策意见\n"
+                f"{validation_feedback}"
+            )
+        if validation_feedback_json:
+            extra_context += (
+                "\n\n## 上一轮 validation 结构化决策\n"
+                f"{validation_feedback_json}"
+            )
 
         if extra_context:
             self.ws.write_file("context/idea_context.md", extra_context)
 
         remaining = set(cp_info["remaining_steps"]) if cp_info else set(idea_roles)
 
+        refinement_hint = ""
+        if pilot_summary:
+            refinement_hint = (
+                "This is an evidence-driven refinement round. Read the pilot summary carefully, "
+                "update or discard hypotheses that the data weakened, preserve the parts that "
+                "show early promise, and make the next proposal easier to falsify.\n\n"
+            )
+            if validation_round > 0:
+                refinement_hint = (
+                    f"This is evidence-driven refinement round {validation_round + 1}. "
+                    + refinement_hint
+                )
+        candidate_hint = (
+            "Maintain a small candidate pool: keep 2-3 serious ideas alive until pilot evidence "
+            "separates them. Do not collapse to a single idea too early unless the evidence is overwhelming.\n\n"
+        )
+
         team_prompt = (
             f"Create an agent team to generate and debate research ideas for: {topic}\n\n"
             f"Workspace: {ws}\n\n"
+            f"{refinement_hint}"
+            f"{candidate_hint}"
             f"Spawn teammates for remaining perspectives:\n"
             + "\n".join(f"- {role}" for role in idea_roles if role in remaining) + "\n\n"
             f"Each reads {ws}/context/idea_context.md for background and writes to "
@@ -755,13 +969,21 @@ class FarsOrchestrator:
         )
         return Action(
             action_type="skill",
-            skills=[{"name": "sibyl-planner", "args": pack_skill_args("plan", ws, pilot_config)}],
+            skills=[{"name": "sibyl-planner", "args": pack_skill_args(ws, "plan", pilot_config)}],
             description="Design experiment plan with pilot/full configs",
             stage="planning",
         )
 
     def _action_pilot_experiments(self, ws: str) -> Action:
         return self._action_experiment_batch(ws, "PILOT", "pilot_experiments")
+
+    def _action_idea_validation_decision(self, ws: str) -> Action:
+        return Action(
+            action_type="skill",
+            skills=[{"name": "sibyl-idea-validation-decision", "args": ws}],
+            description="Review pilot evidence and decide ADVANCE / REFINE / PIVOT",
+            stage="idea_validation_decision",
+        )
 
     def _action_experiment_cycle(self, ws: str, iteration: int) -> Action:
         return self._action_experiment_batch(ws, "FULL", "experiment_cycle")
@@ -889,7 +1111,7 @@ class FarsOrchestrator:
                             action_type="skill",
                             skills=[{
                                 "name": "sibyl-planner",
-                                "args": pack_skill_args("fix-gpu", ws),
+                                "args": pack_skill_args(ws, "fix-gpu"),
                             }],
                             description=(
                                 f"task_plan.json 中 {ids_str}{suffix} 缺少 gpu_count/estimated_minutes，"
@@ -986,8 +1208,8 @@ class FarsOrchestrator:
         env_cmd = self.config.get_remote_env_cmd(self.ws.name)
         if self.config.experiment_mode in ("server_codex", "server_claude"):
             arg_parts = [
-                mode,
                 ws,
+                mode,
                 self.config.ssh_server,
                 self.config.remote_base,
                 env_cmd,
@@ -1003,8 +1225,8 @@ class FarsOrchestrator:
                 "args": pack_skill_args(*arg_parts),
             }
         arg_parts = [
-            mode,
             ws,
+            mode,
             self.config.ssh_server,
             self.config.remote_base,
             env_cmd,
@@ -1208,15 +1430,15 @@ class FarsOrchestrator:
                 + ")"
             )
 
-        # Adaptive poll interval — longer intervals to minimize token usage
-        if max_remaining_min <= 15:
-            poll_interval_sec = 300    # 5 min (nearly done)
-        elif max_remaining_min <= 60:
-            poll_interval_sec = 600    # 10 min
-        elif max_remaining_min <= 240:
-            poll_interval_sec = 900    # 15 min
+        # Adaptive poll interval: keep visibility high during long waits.
+        # For multi-hour runs like ttt-dlm full-scale jobs, 30min gaps look
+        # indistinguishable from "not polling" to the operator.
+        if max_remaining_min <= 30:
+            poll_interval_sec = 120    # 2 min
+        elif max_remaining_min <= 120:
+            poll_interval_sec = 300    # 5 min
         else:
-            poll_interval_sec = 1800   # 30 min (very long experiments)
+            poll_interval_sec = 600    # 10 min
 
         # Build SSH check commands
         remote_dir = f"{self.config.remote_base}/projects/{self.ws.name}"
@@ -1427,7 +1649,7 @@ class FarsOrchestrator:
                 {
                     "name": f"writer-{sid}",
                     "skill": "sibyl-section-writer",
-                    "args": pack_skill_args(name, sid, ws),
+                    "args": pack_skill_args(ws, name, sid),
                 }
                 for sid, name in PAPER_SECTIONS
                 if remaining is None or sid in remaining
@@ -1482,7 +1704,7 @@ class FarsOrchestrator:
             {
                 "name": f"critic-{sid}",
                 "skill": "sibyl-section-critic",
-                "args": pack_skill_args(name, sid, ws),
+                "args": pack_skill_args(ws, name, sid),
             }
             for sid, name in PAPER_SECTIONS
             if remaining is None or sid in remaining
@@ -1567,13 +1789,25 @@ class FarsOrchestrator:
     def _action_quality_gate(self) -> Action:
         """Pure computation — no side effects. Side effects in _get_next_stage."""
         is_done, score, threshold, max_iters, iteration = self._is_pipeline_done()
+        action_plan = _load_workspace_action_plan(self.ws, persist_normalized=True) or {}
+        trajectory = action_plan.get("quality_trajectory", "")
+        focus = ""
+        recommended_focus = action_plan.get("recommended_focus", [])
+        if recommended_focus:
+            focus = str(recommended_focus[0])[:120]
+        extra_parts = []
+        if trajectory:
+            extra_parts.append(f"trajectory={trajectory}")
+        if focus:
+            extra_parts.append(f"focus={focus}")
+        extra = f" ({'; '.join(extra_parts)})" if extra_parts else ""
 
         if is_done:
             return Action(
                 action_type="done",
                 description=(
                     f"Pipeline complete (score={score}, threshold={threshold}, "
-                    f"iter={iteration}/{max_iters})."
+                    f"iter={iteration}/{max_iters}).{extra}"
                 ),
                 stage="done",
             )
@@ -1583,7 +1817,7 @@ class FarsOrchestrator:
                 bash_command=f"echo 'Starting iteration {iteration + 1}'",
                 description=(
                     f"Quality gate: score={score} < {threshold}, "
-                    f"starting iteration {iteration + 1}"
+                    f"starting iteration {iteration + 1}{extra}"
                 ),
                 stage="quality_gate",
             )
@@ -1688,6 +1922,16 @@ class FarsOrchestrator:
         except Exception as e:
             self.ws.add_error(f"Diary update failed: {e}")
 
+        # 2b. Emit iteration_complete event
+        try:
+            el = EventLogger(self.ws.root)
+            el.iteration_complete(
+                iteration=iteration, score=score,
+                issues_count=len(issues_found),
+            )
+        except Exception:
+            pass
+
         # 3. Evolution recording — pass classified_issues directly for proper agent routing
         try:
             if self.config.evolution_enabled:
@@ -1757,7 +2001,10 @@ class FarsOrchestrator:
                           review, re.IGNORECASE)
         score = min(max(float(match.group(1)), 0.0), 10.0) if match else 5.0
         threshold = 8.0
-        max_iters = 10
+        max_iters = self.config.max_iterations
+        max_iters_cap = self.config.max_iterations_cap
+        if max_iters_cap > 0:
+            max_iters_cap = max(max_iters_cap, max_iters)
         action_plan_raw = self.ws.read_file("reflection/action_plan.json")
         if action_plan_raw:
             try:
@@ -1766,7 +2013,11 @@ class FarsOrchestrator:
                 if isinstance(v, (int, float)) and 1.0 <= v <= 10.0:
                     threshold = float(v)
                 v = action_plan.get("suggested_max_iterations")
-                if isinstance(v, int) and 2 <= v <= 20:
+                if (
+                    isinstance(v, int)
+                    and v >= 2
+                    and (max_iters_cap <= 0 or v <= max_iters_cap)
+                ):
                     max_iters = v
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -1802,11 +2053,52 @@ class FarsOrchestrator:
                         f"logs/idea_exp_cycle_{cycle + 1}.marker",
                         f"PIVOT at iteration {iteration}",
                     )
+                    self._prepare_idea_refinement_round(
+                        f"experiment_decision pivot round {cycle + 1}"
+                    )
                     return ("idea_debate", None)
                 else:
                     self.ws.add_error(
                         f"PIVOT requested but cycle limit reached ({cycle}/{self.config.idea_exp_cycles})"
                     )
+
+        if current_stage == "idea_validation_decision":
+            payload = self._load_idea_validation_decision()
+            decision = str(payload.get("decision", "ADVANCE")).upper() or "ADVANCE"
+            selected_candidate_id = str(payload.get("selected_candidate_id", "")).strip()
+            if decision not in {"ADVANCE", "REFINE", "PIVOT"}:
+                self.ws.add_error(
+                    f"Unknown idea validation decision '{decision}', falling back to ADVANCE"
+                )
+                decision = "ADVANCE"
+
+            if decision in {"REFINE", "PIVOT"}:
+                validation_round = self._get_current_validation_round()
+                if (
+                    self.config.idea_validation_rounds > 0
+                    and validation_round >= self.config.idea_validation_rounds
+                ):
+                    self.ws.add_error(
+                        "Idea validation requested more refinement rounds than allowed "
+                        f"({validation_round}/{self.config.idea_validation_rounds}); "
+                        "advancing with current best candidate"
+                    )
+                else:
+                    next_round = validation_round + 1
+                    self.ws.write_file(
+                        f"logs/idea_validation_round_{next_round}.marker",
+                        (
+                            f"{decision} after pilot validation round {next_round} "
+                            f"(selected={selected_candidate_id or 'none'})"
+                        ),
+                    )
+                    self._prepare_idea_refinement_round(
+                        f"idea_validation_decision {decision.lower()} round {next_round}"
+                    )
+                    return ("idea_debate", None)
+
+            self._apply_candidate_selection(selected_candidate_id)
+            return ("experiment_cycle", None)
 
         # experiment stages: loop if more batches remain OR tasks still running
         if current_stage in ("pilot_experiments", "experiment_cycle"):
@@ -1865,6 +2157,9 @@ class FarsOrchestrator:
 
         if current_stage == "pilot_experiments":
             self._reset_experiment_runtime_state()
+            if self.config.idea_validation_rounds > 0:
+                return ("idea_validation_decision", None)
+            return ("experiment_cycle", None)
 
         # quality_gate: execute side effects and determine next stage
         if current_stage == "quality_gate":
@@ -1953,10 +2248,15 @@ class FarsOrchestrator:
                 exp_state_path.unlink()
             except OSError:
                 pass
-        # Clear PIVOT cycle markers (per-iteration budget)
+        # Clear idea iteration markers (per-iteration budgets)
         logs_dir = self.ws.project_path("logs")
         if logs_dir.exists():
             for marker in logs_dir.glob("idea_exp_cycle_*.marker"):
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
+            for marker in logs_dir.glob("idea_validation_round_*.marker"):
                 try:
                     marker.unlink()
                 except OSError:
@@ -2010,6 +2310,128 @@ class FarsOrchestrator:
             return 0
         return len(list(logs_dir.glob("idea_exp_cycle_*.marker")))
 
+    def _get_current_validation_round(self) -> int:
+        """Get current pilot-guided idea refinement round count."""
+        logs_dir = self.ws.project_path("logs")
+        if not logs_dir.exists():
+            return 0
+        return len(list(logs_dir.glob("idea_validation_round_*.marker")))
+
+    def _prepare_idea_refinement_round(self, reason: str) -> None:
+        """Clear idea-debate transient artifacts so a refinement round can rerun."""
+        for subdir in ("idea/perspectives", "idea/debate"):
+            target = self.ws.active_path(subdir)
+            try:
+                if target.exists():
+                    shutil.rmtree(target)
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+        cp_dir = CHECKPOINT_DIRS.get("idea_debate")
+        if cp_dir:
+            self.ws.clear_checkpoint(cp_dir)
+        self.ws.write_file("logs/idea_refinement_state.txt", reason)
+
+    def _load_json_artifact(self, relative_path: str) -> dict | None:
+        """Best-effort JSON loader for workspace artifacts."""
+        content = self.ws.read_file(relative_path)
+        if not content:
+            return None
+        try:
+            data = json.loads(content)
+        except (TypeError, json.JSONDecodeError):
+            self.ws.add_error(f"Failed to parse JSON artifact: {relative_path}")
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _load_idea_validation_decision(self) -> dict:
+        """Load idea validation decision with JSON-first, markdown-fallback parsing."""
+        payload = self._load_json_artifact("supervisor/idea_validation_decision.json") or {}
+
+        decision = str(payload.get("decision", "")).upper()
+        if decision in {"ADVANCE", "REFINE", "PIVOT"}:
+            return payload
+
+        content = self.ws.read_file("supervisor/idea_validation_decision.md") or ""
+        match = re.search(r"DECISION:\s*(ADVANCE|REFINE|PIVOT)", content, re.IGNORECASE)
+        if match:
+            payload["decision"] = match.group(1).upper()
+        selected = re.search(
+            r"SELECTED_CANDIDATE:\s*([A-Za-z0-9_.-]+)", content, re.IGNORECASE
+        )
+        if selected and "selected_candidate_id" not in payload:
+            payload["selected_candidate_id"] = selected.group(1)
+        confidence = re.search(r"CONFIDENCE:\s*(\d+(?:\.\d+)?)", content, re.IGNORECASE)
+        if confidence and "confidence" not in payload:
+            payload["confidence"] = float(confidence.group(1))
+        return payload
+
+    def _task_matches_candidate(self, task: dict, selected_candidate_id: str) -> bool:
+        """Return True when a task should survive candidate selection."""
+        if not selected_candidate_id:
+            return True
+        candidate_id = task.get("candidate_id")
+        if not candidate_id:
+            return True
+        if isinstance(candidate_id, list):
+            return (
+                selected_candidate_id in candidate_id
+                or "shared" in candidate_id
+            )
+        return candidate_id in {selected_candidate_id, "shared"}
+
+    def _apply_candidate_selection(self, selected_candidate_id: str) -> None:
+        """Filter task_plan.json down to the chosen candidate plus shared tasks."""
+        if not selected_candidate_id:
+            return
+
+        task_plan_path = self.ws.active_path("plan/task_plan.json")
+        if not task_plan_path.exists():
+            return
+
+        try:
+            plan = json.loads(task_plan_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self.ws.add_error("Failed to parse plan/task_plan.json during candidate selection")
+            return
+
+        tasks = plan.get("tasks", [])
+        if not isinstance(tasks, list) or not tasks:
+            return
+
+        filtered = [
+            task for task in tasks
+            if isinstance(task, dict) and self._task_matches_candidate(task, selected_candidate_id)
+        ]
+        if not filtered:
+            self.ws.add_error(
+                "Candidate selection produced an empty task plan; keeping the original plan"
+            )
+            return
+
+        kept_ids = {task.get("id") for task in filtered if task.get("id")}
+        for task in filtered:
+            deps = task.get("depends_on")
+            if isinstance(deps, list):
+                task["depends_on"] = [dep for dep in deps if dep in kept_ids]
+
+        plan["tasks"] = filtered
+        self.ws.write_file(
+            "plan/task_plan.json",
+            json.dumps(plan, indent=2, ensure_ascii=False),
+        )
+        self.ws.write_file(
+            "plan/selected_candidate.json",
+            json.dumps(
+                {
+                    "selected_candidate_id": selected_candidate_id,
+                    "kept_task_count": len(filtered),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+        )
+
     @staticmethod
     def _slugify(text: str) -> str:
         slug = text.lower().strip()
@@ -2027,6 +2449,11 @@ def cli_init(topic: str, project_name: str | None = None,
     """CLI: Initialize a project."""
     result = FarsOrchestrator.init_project(topic, project_name, config_path)
     print(json.dumps(result, indent=2))
+    try:
+        el = EventLogger(Path(result["workspace_path"]))
+        el.project_init(topic=topic, project_name=result.get("project_name", ""))
+    except Exception:
+        pass
 
 
 def _write_sentinel_heartbeat(workspace_path: str, stage: str, action: str):
@@ -2083,16 +2510,31 @@ def cli_next(workspace_path: str):
     try:
         _write_sentinel_heartbeat(workspace_path, action.get("stage", ""), "cli_next")
         _write_breadcrumb(workspace_path, action_dict=action)
+        # Emit stage_start event (best-effort)
+        action_type = action.get("action_type", "")
+        if action_type not in ("done", "stopped", "gpu_poll", "experiment_wait"):
+            el = EventLogger(Path(workspace_path))
+            el.stage_start(
+                stage=action.get("stage", ""),
+                iteration=action.get("iteration", 0),
+                action_type=action_type,
+                description=action.get("description", "")[:200],
+            )
     except Exception:
-        pass  # Heartbeat + breadcrumb are best-effort
+        pass  # Heartbeat + breadcrumb + events are best-effort
 
 
 def cli_record(workspace_path: str, stage: str, result: str = "",
                score: float | None = None):
     """CLI: Record stage result."""
     o = FarsOrchestrator(workspace_path)
+    # Capture stage_started_at before advancing
+    prev_status = o.ws.get_status()
+    stage_started_at = prev_status.stage_started_at
+
     o.record_result(stage, result, score)
-    output = {"status": "ok", "new_stage": o.ws.get_status().stage}
+    new_status = o.ws.get_status()
+    output = {"status": "ok", "new_stage": new_status.stage}
     # Signal main session to launch background sync agent
     _NO_SYNC_TRIGGER = {"init", "quality_gate", "done", "lark_sync"}
     if o.config.lark_enabled and stage not in _NO_SYNC_TRIGGER:
@@ -2101,6 +2543,16 @@ def cli_record(workspace_path: str, stage: str, result: str = "",
     try:
         _write_sentinel_heartbeat(workspace_path, stage, "cli_record")
         _write_breadcrumb(workspace_path, stage=stage, completed=True)
+        # Emit stage_end event (best-effort)
+        el = EventLogger(Path(workspace_path))
+        duration = (time.time() - stage_started_at) if stage_started_at else None
+        el.stage_end(
+            stage=stage,
+            iteration=prev_status.iteration,
+            duration_sec=duration,
+            score=score,
+            next_stage=new_status.stage,
+        )
     except Exception:
         pass
 
@@ -2109,15 +2561,27 @@ def cli_pause(workspace_path: str, reason: str = "rate_limit"):
     """CLI: Write a legacy pause marker or manual stop marker."""
     o = FarsOrchestrator(workspace_path)
     o.ws.pause(reason)
+    status = o.ws.get_status()
     status_value = "stopped" if reason == "user_stop" else "paused"
-    print(json.dumps({"status": status_value, "stage": o.ws.get_status().stage}))
+    print(json.dumps({"status": status_value, "stage": status.stage}))
+    try:
+        EventLogger(Path(workspace_path)).pause(
+            reason=reason, stage=status.stage, iteration=status.iteration)
+    except Exception:
+        pass
 
 
 def cli_resume(workspace_path: str):
     """CLI: Clear stop/pause markers and resume a project."""
     o = FarsOrchestrator(workspace_path)
     o.ws.resume()
-    print(json.dumps({"status": "resumed", "stage": o.ws.get_status().stage}))
+    status = o.ws.get_status()
+    print(json.dumps({"status": "resumed", "stage": status.stage}))
+    try:
+        EventLogger(Path(workspace_path)).resume(
+            stage=status.stage, iteration=status.iteration)
+    except Exception:
+        pass
 
 
 def cli_status(workspace_path: str):
@@ -2172,6 +2636,12 @@ def cli_checkpoint(workspace_path: str, stage: str, step_id: str):
     if result["missing_files"]:
         payload["missing_files"] = result["missing_files"]
     print(json.dumps(payload))
+    try:
+        status = ws.get_status()
+        EventLogger(ws.root).checkpoint_step(
+            stage=stage, step_id=step_id, iteration=status.iteration)
+    except Exception:
+        pass
 
 
 def cli_experiment_status(workspace_path: str = ""):
@@ -2328,6 +2798,21 @@ def cli_experiment_status(workspace_path: str = ""):
     result["estimated_remaining_min"] = est_remaining_min
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    # Persist monitor snapshot to workspace for dashboard access
+    try:
+        monitor_persist = {
+            k: v for k, v in result.items() if k != "display"
+        }
+        monitor_persist["snapshot_at"] = time.time()
+        persist_path = active_root / "exp" / "monitor_status.json"
+        persist_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = persist_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(monitor_persist, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+        tmp.replace(persist_path)
+    except Exception:
+        pass
 
 
 def cli_sentinel_session(workspace_path: str, session_id: str):
@@ -2495,6 +2980,13 @@ def cli_dispatch_tasks(workspace_path: str):
         "description": f"动态调度: {gpu_summary}",
         "estimated_minutes": info["estimated_minutes"],
     }, indent=2))
+    try:
+        all_tids = [t for a in batch for t in a["task_ids"]]
+        all_gids = [g for a in batch for g in a["gpu_ids"]]
+        EventLogger(Path(workspace_path)).task_dispatch(
+            task_ids=all_tids, gpu_ids=all_gids, iteration=status.iteration)
+    except Exception:
+        pass
 
 
 def cli_recover_experiments(workspace_path: str):
@@ -2726,60 +3218,347 @@ def cli_init_from_spec(spec_path: str, config_path: str | None = None):
     }, indent=2))
 
 
-def cli_migrate(workspace_path: str):
-    """CLI: Migrate a legacy project to v5 structure."""
-    ws_path = Path(workspace_path)
-    if not ws_path.exists():
-        print(json.dumps({"error": f"Workspace not found: {workspace_path}"}))
+def _infer_topic_for_workspace(ws: Workspace) -> str:
+    """Infer a reasonable topic when legacy workspaces are missing topic.txt."""
+    spec_path = ws.root / "spec.md"
+    if spec_path.exists():
+        try:
+            spec_text = spec_path.read_text(encoding="utf-8")
+            match = re.search(r'^#\s*(.+)', spec_text, re.MULTILINE)
+            if match:
+                return match.group(1).strip()
+        except OSError:
+            pass
+
+    proposal = ws.read_file("idea/proposal.md")
+    if proposal:
+        title_match = re.search(r'^#\s*(.+)', proposal, re.MULTILINE)
+        if title_match:
+            return title_match.group(1).strip()
+
+    topic = ws.read_file("topic.txt")
+    if topic:
+        return topic.strip()
+
+    return ws.name.replace("-", " ").title()
+
+
+def _detect_workspace_iteration_dirs(
+    workspace_root: Path,
+    raw_status: dict,
+    default: bool,
+) -> bool:
+    """Infer iteration directory mode for legacy workspaces."""
+    if "iteration_dirs" in raw_status:
+        return bool(raw_status.get("iteration_dirs"))
+    current_link = workspace_root / "current"
+    if current_link.exists():
+        return True
+    return any(
+        child.is_dir() and re.fullmatch(r"iter_\d{3}", child.name)
+        for child in workspace_root.iterdir()
+    ) or default
+
+
+def _strip_leading_title(markdown: str) -> str:
+    lines = markdown.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and lines[0].lstrip().startswith("#"):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _build_migrated_spec(ws: Workspace, topic: str) -> str:
+    """Build a conservative spec.md for a legacy workspace."""
+    proposal = ws.read_file("idea/proposal.md") or ""
+    proposal_body = _strip_leading_title(proposal)
+    lines = [
+        f"# 项目: {ws.name}",
+        "",
+        "## 研究主题",
+        topic,
+        "",
+    ]
+
+    if proposal_body:
+        lines.extend([
+            "## 背景与当前状态",
+            "_以下内容由旧版 `idea/proposal.md` 回填，建议后续继续整理为正式 spec。_",
+            "",
+            proposal_body,
+            "",
+        ])
+    else:
+        lines.extend([
+            "## 背景与当前状态",
+            "_旧项目迁移自动生成，请补充研究背景、关键约束和目标产出。_",
+            "",
+            "## 关键约束",
+            "- 待补充",
+            "",
+            "## 目标产出",
+            "- 待补充",
+            "",
+        ])
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _ensure_workspace_gitignore(ws: Workspace) -> bool:
+    """Ensure runtime-managed paths are ignored inside the workspace repo."""
+    gitignore_path = ws.root / ".gitignore"
+    existing_lines: list[str] = []
+    if gitignore_path.exists():
+        existing_lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+
+    changed = False
+    for line in _RUNTIME_GITIGNORE_LINES:
+        if line not in existing_lines:
+            existing_lines.append(line)
+            changed = True
+
+    if changed or not gitignore_path.exists():
+        content = "\n".join(existing_lines).rstrip() + "\n"
+        gitignore_path.write_text(content, encoding="utf-8")
+    return changed
+
+
+def _ensure_workspace_git_repo(
+    ws: Workspace,
+    changes: list[str],
+    warnings: list[str],
+) -> None:
+    """Initialize a per-workspace git repo without clobbering custom ignores."""
+    git_was_present = (ws.root / ".git").exists()
+    gitignore_changed = _ensure_workspace_gitignore(ws)
+    if gitignore_changed:
+        changes.append("Updated .gitignore for layered runtime assets")
+    elif not (ws.root / ".gitignore").exists():
+        changes.append("Created .gitignore for layered runtime assets")
+
+    if git_was_present:
         return
 
-    config = Config()
-    project_name = ws_path.name
-    ws = Workspace(config.workspaces_dir, project_name)
+    init_result = subprocess.run(
+        ["git", "init"],
+        cwd=ws.root,
+        capture_output=True,
+        text=True,
+    )
+    if init_result.returncode != 0:
+        warnings.append(f"Failed to initialize git repo: {init_result.stderr.strip()}")
+        return
+    changes.append("Initialized workspace git repository")
 
-    changes = []
+    subprocess.run(["git", "add", "."], cwd=ws.root, capture_output=True, text=True)
+    commit_result = subprocess.run(
+        ["git", "commit", "-m", "feat: initialize Sibyl research project"],
+        cwd=ws.root,
+        capture_output=True,
+        text=True,
+    )
+    if commit_result.returncode == 0:
+        changes.append("Created initial workspace git commit")
+        return
 
-    # Ensure v5 directories exist (Workspace.__init__ handles this)
-    changes.append("Ensured v5 directory structure")
+    commit_output = f"{commit_result.stdout}\n{commit_result.stderr}".lower()
+    if "nothing to commit" not in commit_output:
+        warnings.append("Git repo initialized but initial commit failed")
 
-    # Create topic.txt if missing
+
+def _merge_pending_sync_jsonl(target_path: Path, legacy_path: Path) -> bool:
+    """Merge a legacy pending_sync.jsonl into the canonical workspace path."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_lines = target_path.read_text(encoding="utf-8").splitlines() if target_path.exists() else []
+    legacy_lines = legacy_path.read_text(encoding="utf-8").splitlines() if legacy_path.exists() else []
+
+    merged = list(target_lines)
+    for line in legacy_lines:
+        if line and line not in merged:
+            merged.append(line)
+
+    def _sort_key(line: str) -> tuple[str, str]:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            return ("", line)
+        return (str(payload.get("timestamp") or payload.get("at") or ""), line)
+
+    merged.sort(key=_sort_key)
+    if merged == target_lines:
+        return False
+
+    content = "\n".join(merged).rstrip()
+    if content:
+        content += "\n"
+    target_path.write_text(content, encoding="utf-8")
+    return True
+
+
+def _cleanup_legacy_nested_workspace_dir(
+    ws: Workspace,
+    changes: list[str],
+    warnings: list[str],
+) -> None:
+    """Flatten supported legacy nested workspace artifacts back into the root."""
+    nested_root = ws.root / ws.name
+    if not nested_root.exists() or not nested_root.is_dir():
+        return
+
+    supported_files = {"lark_sync/pending_sync.jsonl"}
+    unsupported_files: list[str] = []
+    for path in nested_root.rglob("*"):
+        if path.is_file():
+            rel_path = path.relative_to(nested_root).as_posix()
+            if rel_path not in supported_files:
+                unsupported_files.append(rel_path)
+
+    if unsupported_files:
+        warnings.append(
+            "Legacy nested workspace directory contains unsupported files: "
+            + ", ".join(sorted(unsupported_files))
+        )
+        return
+
+    legacy_pending = nested_root / "lark_sync" / "pending_sync.jsonl"
+    if legacy_pending.exists():
+        merged = _merge_pending_sync_jsonl(
+            ws.root / "lark_sync" / "pending_sync.jsonl",
+            legacy_pending,
+        )
+        if merged:
+            changes.append("Merged legacy nested lark_sync/pending_sync.jsonl into workspace root")
+
+    shutil.rmtree(nested_root)
+    changes.append("Removed legacy nested workspace directory")
+
+
+def migrate_workspace(workspace_path: str | Path) -> dict:
+    """Migrate one project workspace onto the layered runtime scaffold."""
+    ws_path = resolve_workspace_root(workspace_path)
+    if not ws_path.exists():
+        return {"error": f"Workspace not found: {workspace_path}"}
+
+    raw_status: dict = {}
+    status_path = ws_path / "status.json"
+    if status_path.exists():
+        try:
+            raw_status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            raw_status = {}
+    default_cfg = load_effective_config(workspace_path=ws_path)
+    iteration_dirs = _detect_workspace_iteration_dirs(
+        ws_path,
+        raw_status,
+        default_cfg.iteration_dirs,
+    )
+
+    runtime_scaffold_was_ready = all(
+        (ws_path / rel_path).exists() or (ws_path / rel_path).is_symlink()
+        for rel_path in (
+            ".sibyl/system.json",
+            ".sibyl/project/MEMORY.md",
+            ".sibyl/project/prompt_overlays",
+            "CLAUDE.md",
+            ".claude/agents",
+            ".claude/skills",
+            ".claude/settings.local.json",
+            ".venv",
+        )
+    )
+
+    ws = Workspace(ws_path.parent, ws_path.name, iteration_dirs=iteration_dirs)
+
+    changes: list[str] = []
+    warnings: list[str] = []
+
     if not (ws.root / "topic.txt").exists():
-        # Try to extract from proposal
-        proposal = ws.read_file("idea/proposal.md")
-        if proposal:
-            # Try to extract title
-            title_match = re.search(r'^#\s*(.+)', proposal, re.MULTILINE)
-            topic = title_match.group(1).strip() if title_match else project_name
-        else:
-            topic = project_name.replace("-", " ").title()
+        topic = _infer_topic_for_workspace(ws)
         ws.write_file("topic.txt", topic)
         changes.append(f"Created topic.txt: {topic}")
+    else:
+        topic = (ws.read_file("topic.txt") or "").strip() or _infer_topic_for_workspace(ws)
 
-    # Ensure status.json has iteration field
-    status = ws.get_status()
-    if status.iteration == 0 and status.stage == "done":
-        status.iteration = 1
-        ws._save_status(status)
-        changes.append("Set iteration to 1 (was 0 for completed project)")
+    if not (ws.root / "config.yaml").exists():
+        write_project_config(ws, default_cfg)
+        changes.append("Created project config snapshot")
 
-    # Create missing subdirectories
-    for subdir in ["idea/perspectives", "idea/debate", "idea/result_debate",
-                   "plan", "exp/results/pilots", "exp/results/full",
-                   "lark_sync", "logs/iterations"]:
-        d = ws.root / subdir
-        if not d.exists():
-            d.mkdir(parents=True, exist_ok=True)
-            changes.append(f"Created directory: {subdir}")
+    if not (ws.root / "spec.md").exists():
+        ws.write_file("spec.md", _build_migrated_spec(ws, topic))
+        changes.append("Created spec.md from legacy workspace state")
 
-    print(json.dumps({
-        "project_name": project_name,
+    _ensure_workspace_git_repo(ws, changes, warnings)
+    _cleanup_legacy_nested_workspace_dir(ws, changes, warnings)
+
+    normalized_status = ws.get_status()
+    normalized_status.iteration_dirs = iteration_dirs
+    if normalized_status.stage_started_at is None and normalized_status.updated_at:
+        normalized_status.stage_started_at = normalized_status.updated_at
+        changes.append("Backfilled stage_started_at from updated_at")
+    if normalized_status.iteration == 0 and normalized_status.stage == "done":
+        normalized_status.iteration = 1
+        changes.append("Set iteration to 1 for completed legacy project")
+
+    normalized_payload = asdict(normalized_status)
+    if raw_status != normalized_payload:
+        ws._save_status(normalized_status)
+        changes.append("Normalized status.json to current schema")
+
+    runtime_after = ws.get_runtime_metadata()
+    if not runtime_scaffold_was_ready:
+        changes.append("Installed layered runtime scaffold")
+
+    warnings.extend(runtime_after["warnings"])
+
+    return {
+        "project_name": ws.name,
         "workspace_path": str(ws.root),
         "changes": changes,
+        "warnings": warnings,
+        "runtime": runtime_after,
         "status": {
             "stage": ws.get_status().stage,
             "iteration": ws.get_status().iteration,
         },
-    }, indent=2))
+    }
+
+
+def cli_migrate(workspace_path: str):
+    """CLI: Migrate a legacy project to v5 structure."""
+    print(json.dumps(migrate_workspace(workspace_path), indent=2, ensure_ascii=False))
+
+
+def cli_migrate_all(workspaces_dir: str | None = None):
+    """CLI: Migrate every detected project under a workspaces directory."""
+    cfg = load_effective_config()
+    ws_dir = Path(workspaces_dir).expanduser() if workspaces_dir else cfg.workspaces_dir
+    ws_dir = ws_dir.resolve()
+    if not ws_dir.exists():
+        print(json.dumps({"error": f"Workspaces dir not found: {ws_dir}"}))
+        return
+
+    results = []
+    for project_dir in sorted(ws_dir.iterdir()):
+        if not project_dir.is_dir() or not (project_dir / "status.json").exists():
+            continue
+        results.append(migrate_workspace(project_dir))
+
+    print(json.dumps({
+        "workspaces_dir": str(ws_dir),
+        "total": len(results),
+        "migrated": [
+            {
+                "project_name": r.get("project_name", ""),
+                "changes": r.get("changes", []),
+                "warnings": r.get("warnings", []),
+                "migration_needed": r.get("runtime", {}).get("migration_needed", False),
+            }
+            for r in results
+        ],
+    }, indent=2, ensure_ascii=False))
 
 
 def cli_migrate_server(project_name: str, ssh_connection: str = "default"):
@@ -2820,7 +3599,7 @@ def cli_migrate_server(project_name: str, ssh_connection: str = "default"):
         f"cp -r {remote_base}/writing/* {project_dir}/writing/ 2>/dev/null || true",
         "",
         "# 创建状态文件",
-        f'echo \'{{"stage": "done", "started_at": 0, "updated_at": 0, "iteration": 1, "errors": []}}\' > {project_dir}/status.json',
+        f'echo \'{{"stage": "done", "started_at": 0, "updated_at": 0, "iteration": 1, "errors": [], "paused": false, "paused_at": null, "stop_requested": false, "stop_requested_at": null, "iteration_dirs": false, "stage_started_at": 0}}\' > {project_dir}/status.json',
         "",
         "# 保留共享资源的符号链接",
         f"ln -sf {remote_base}/models {project_dir}/models 2>/dev/null || true",
@@ -2975,3 +3754,150 @@ while true; do
     sleep "$INTERVAL"
 done
 '''
+
+
+# ══════════════════════════════════════════════
+# Event logging & dashboard CLI
+# ══════════════════════════════════════════════
+
+def cli_log_agent(workspace_path: str, stage: str, agent_name: str,
+                  event: str = "start", model_tier: str = "",
+                  status: str = "ok", duration_sec: float | None = None,
+                  output_files: str = "", output_summary: str = "",
+                  prompt_summary: str = ""):
+    """CLI: Log an agent invocation event (start or end).
+
+    Called by main session / skill execution layer before/after each agent.
+
+    Args:
+        event: "start" or "end"
+        output_files: comma-separated file paths (relative to workspace)
+    """
+    ws_path = Path(workspace_path)
+    ws = Workspace(ws_path.parent, ws_path.name)
+    ws_status = ws.get_status()
+    # Auto-detect stage from status.json if not provided
+    if not stage:
+        stage = ws_status.stage
+    el = EventLogger(ws.root)
+
+    if event == "start":
+        result = el.agent_start(
+            stage=stage, agent_name=agent_name, model_tier=model_tier,
+            iteration=ws_status.iteration, prompt_summary=prompt_summary,
+        )
+    else:
+        files = [f.strip() for f in output_files.split(",") if f.strip()] if output_files else []
+        result = el.agent_end(
+            stage=stage, agent_name=agent_name, status=status,
+            duration_sec=duration_sec, output_files=files,
+            output_summary=output_summary, iteration=ws_status.iteration,
+        )
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def cli_dashboard_data(workspace_path: str, events_tail: int = 50):
+    """CLI: Aggregate all monitoring data for frontend dashboard."""
+    payload = collect_dashboard_data(workspace_path, events_tail=events_tail)
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def collect_dashboard_data(workspace_path: str | Path, events_tail: int = 50) -> dict:
+    """Aggregate dashboard data for the web UI and CLI consumers."""
+    from sibyl.gpu_scheduler import _load_progress
+
+    o = FarsOrchestrator(workspace_path)
+    ws = o.ws
+    el = EventLogger(ws.root)
+
+    # 1. Project status
+    project_status = ws.get_project_metadata()
+    project_status["topic"] = ws.read_file("topic.txt") or ""
+
+    # 2. Event-derived analytics
+    stage_durations = el.get_stage_durations()
+    agent_summary = el.get_agent_summary()
+    recent_events = el.tail(events_tail)
+
+    # 3. Experiment progress
+    experiment_progress = {}
+    try:
+        completed, running_ids, running_map, timings = _load_progress(ws.active_root)
+        experiment_progress["gpu_progress"] = {
+            "completed": sorted(completed),
+            "running": sorted(running_ids),
+            "running_map": running_map,
+            "timings": timings,
+        }
+    except Exception:
+        pass
+    exp_state_path = ws.active_path("exp/experiment_state.json")
+    if exp_state_path.exists():
+        try:
+            experiment_progress["experiment_state"] = json.loads(
+                exp_state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Include workspace-local monitor status
+    monitor_path = ws.active_path("exp/monitor_status.json")
+    if monitor_path.exists():
+        try:
+            experiment_progress["monitor"] = json.loads(
+                monitor_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 4. Checkpoints
+    checkpoints = {}
+    for stage_name, cp_dir in CHECKPOINT_DIRS.items():
+        if ws.has_checkpoint(cp_dir):
+            checkpoints[stage_name] = ws.validate_checkpoint(cp_dir)
+
+    # 5. Quality trend
+    quality_trend = []
+    try:
+        from sibyl.reflection import IterationLogger
+        il = IterationLogger(ws.root)
+        history = il.get_history()
+        quality_trend = [
+            {"iteration": h["iteration"], "score": h["quality_score"],
+             "timestamp": h["timestamp"]}
+            for h in history
+        ]
+    except Exception:
+        pass
+
+    # 6. Lark sync status
+    lark_sync = None
+    sync_path = ws.root / "lark_sync" / "sync_status.json"
+    if sync_path.exists():
+        try:
+            lark_sync = json.loads(sync_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 7. Recent errors
+    errors = []
+    errors_path = ws.root / "logs" / "errors.jsonl"
+    if errors_path.exists():
+        try:
+            lines = errors_path.read_text(encoding="utf-8").strip().split("\n")
+            for line in lines[-20:]:  # last 20 errors
+                if line.strip():
+                    errors.append(json.loads(line))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return {
+        "status": project_status,
+        "runtime": ws.get_runtime_metadata(),
+        "stages": FarsOrchestrator.STAGES,
+        "stage_durations": stage_durations,
+        "agent_summary": agent_summary,
+        "recent_events": recent_events,
+        "experiment_progress": experiment_progress,
+        "checkpoints": checkpoints,
+        "quality_trend": quality_trend,
+        "lark_sync_status": lark_sync,
+        "errors": errors,
+    }

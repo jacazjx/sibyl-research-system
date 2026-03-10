@@ -1,5 +1,6 @@
 """Tests for sibyl.workspace module."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +45,22 @@ class TestWorkspaceInit:
         ws1.update_stage("planning")
         ws2 = Workspace(tmp_path, "proj")
         assert ws2.get_status().stage == "planning"
+
+    def test_creates_runtime_scaffold(self, tmp_path):
+        ws = Workspace(tmp_path, "runtime-proj")
+
+        assert (ws.root / ".sibyl" / "system.json").exists()
+        assert (ws.root / ".sibyl" / "project" / "MEMORY.md").exists()
+        assert (ws.root / ".sibyl" / "project" / "prompt_overlays").is_dir()
+        assert (ws.root / "CLAUDE.md").exists()
+        assert "## Project Memory Layer" in (ws.root / "CLAUDE.md").read_text(encoding="utf-8")
+
+        agents_link = ws.root / ".claude" / "agents"
+        skills_link = ws.root / ".claude" / "skills"
+        assert agents_link.is_symlink()
+        assert skills_link.is_symlink()
+        assert agents_link.resolve() == (Path(__file__).resolve().parents[1] / ".claude" / "agents")
+        assert skills_link.resolve() == (Path(__file__).resolve().parents[1] / ".claude" / "skills")
 
 
 class TestWorkspaceStatus:

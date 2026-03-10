@@ -7,6 +7,14 @@ from pathlib import Path
 import dataclasses
 from dataclasses import dataclass, asdict, field
 
+from sibyl.runtime_assets import (
+    GENERATED_CLAUDE_HEADER,
+    WORKSPACE_PROJECT_MEMORY,
+    WORKSPACE_PROJECT_PROMPT_OVERLAYS,
+    WORKSPACE_SYSTEM_META,
+    ensure_workspace_runtime_assets,
+)
+
 
 @dataclass
 class WorkspaceStatus:
@@ -20,6 +28,7 @@ class WorkspaceStatus:
     stop_requested: bool = False
     stop_requested_at: float | None = None
     iteration_dirs: bool = False  # True = iteration subdirectory mode
+    stage_started_at: float | None = None  # timestamp when current stage began
 
 
 def _normalize_status_flag(value: object, fallback: bool) -> bool:
@@ -85,6 +94,9 @@ class Workspace:
         <project_name>/
         ├── status.json
         ├── config.yaml              # project-level config overrides
+        ├── CLAUDE.md               # generated effective system+project instructions
+        ├── .claude/                # runtime links to system-managed Claude assets
+        ├── .sibyl/project/         # project-private memory + overlays
         ├── environment/
         │   └── requirements.txt
         ├── idea/
@@ -144,12 +156,16 @@ class Workspace:
         "topic.txt",
         "spec.md",
         ".gitignore",
+        "CLAUDE.md",
     }
     _PROJECT_SCOPED_PREFIXES = (
         "shared/",
         "logs/",
         "current/",
         "iter_",
+        ".claude/",
+        ".sibyl/",
+        ".venv",
         ".git/",
     )
 
@@ -210,6 +226,8 @@ class Workspace:
             )
             self._save_status(status)
 
+        ensure_workspace_runtime_assets(self.root)
+
     def start_new_iteration(self, iteration: int):
         """Create a new iteration directory and update current symlink.
 
@@ -266,6 +284,7 @@ class Workspace:
     def update_stage(self, stage: str):
         status = self.get_status()
         status.stage = stage
+        status.stage_started_at = time.time()
         self._save_status(status)
 
     def update_iteration(self, iteration: int):
@@ -278,6 +297,7 @@ class Workspace:
         status = self.get_status()
         status.stage = stage
         status.iteration = iteration
+        status.stage_started_at = time.time()
         self._save_status(status)
 
 
@@ -430,7 +450,17 @@ class Workspace:
         if (self.root / ".git").exists():
             return
         subprocess.run(["git", "init"], cwd=self.root, capture_output=True)
-        gitignore = "*.pyc\n__pycache__/\n.DS_Store\n"
+        gitignore = (
+            "*.pyc\n"
+            "__pycache__/\n"
+            ".DS_Store\n"
+            ".venv/\n"
+            "CLAUDE.md\n"
+            ".claude/agents\n"
+            ".claude/skills\n"
+            ".claude/settings.local.json\n"
+            ".sibyl/system.json\n"
+        )
         (self.root / ".gitignore").write_text(gitignore, encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=self.root, capture_output=True)
         subprocess.run(
@@ -618,6 +648,7 @@ class Workspace:
         has_proposal = self.active_path("idea/proposal.md").exists()
         pilot_results = self.list_files("exp/results/pilots")
         full_results = self.list_files("exp/results/full")
+        runtime = self.get_runtime_metadata()
         return {
             "name": self.name,
             "stage": status.stage,
@@ -632,4 +663,138 @@ class Workspace:
             "full_results": len(full_results),
             "started_at": status.started_at,
             "updated_at": status.updated_at,
+            "stage_started_at": status.stage_started_at,
+            "migration_needed": runtime["migration_needed"],
+            "runtime_ready": runtime["runtime_ready"],
+            "runtime": runtime,
+        }
+
+    def get_runtime_metadata(self) -> dict:
+        """Return workspace/runtime composition health for dashboards and migration."""
+        warnings: list[str] = []
+        system_root = ""
+
+        system_meta_path = self.root / WORKSPACE_SYSTEM_META
+        if system_meta_path.exists():
+            try:
+                system_root = json.loads(system_meta_path.read_text(encoding="utf-8")).get(
+                    "system_root", ""
+                )
+            except (json.JSONDecodeError, OSError):
+                warnings.append("Corrupted .sibyl/system.json")
+        else:
+            warnings.append("Missing .sibyl/system.json")
+
+        project_memory_path = self.root / WORKSPACE_PROJECT_MEMORY
+        overlays_dir = self.root / WORKSPACE_PROJECT_PROMPT_OVERLAYS
+        claude_path = self.root / "CLAUDE.md"
+        agents_link = self.root / ".claude" / "agents"
+        skills_link = self.root / ".claude" / "skills"
+        settings_link = self.root / ".claude" / "settings.local.json"
+        venv_link = self.root / ".venv"
+
+        status_path = self.root / "status.json"
+        legacy_status_schema = False
+        if status_path.exists():
+            try:
+                raw_status = json.loads(status_path.read_text(encoding="utf-8"))
+                legacy_status_schema = (
+                    "paused" not in raw_status
+                    or "stop_requested" not in raw_status
+                    or "stage_started_at" not in raw_status
+                    or "resume_after_sync" in raw_status
+                )
+            except (json.JSONDecodeError, OSError):
+                warnings.append("Corrupted status.json")
+
+        topic_exists = (self.root / "topic.txt").exists()
+        config_exists = (self.root / "config.yaml").exists()
+        spec_exists = (self.root / "spec.md").exists()
+        git_initialized = (self.root / ".git").exists()
+        gitignore_exists = (self.root / ".gitignore").exists()
+        nested_project_dir = self.root / self.name
+        nested_project_dir_exists = nested_project_dir.exists()
+        if nested_project_dir_exists:
+            warnings.append(f"Nested project directory found: {nested_project_dir.name}/")
+
+        if not topic_exists:
+            warnings.append("Missing topic.txt")
+        if not config_exists:
+            warnings.append("Missing config.yaml")
+        if not spec_exists:
+            warnings.append("Missing spec.md")
+        if not git_initialized:
+            warnings.append("Missing workspace git repo")
+        if git_initialized and not gitignore_exists:
+            warnings.append("Missing .gitignore")
+        if legacy_status_schema:
+            warnings.append("Legacy status.json schema")
+
+        claude_generated = False
+        if claude_path.exists():
+            try:
+                claude_generated = claude_path.read_text(encoding="utf-8").startswith(
+                    GENERATED_CLAUDE_HEADER
+                )
+            except OSError:
+                warnings.append("Unreadable CLAUDE.md")
+        else:
+            warnings.append("Missing CLAUDE.md")
+
+        project_overlay_count = 0
+        if overlays_dir.exists():
+            project_overlay_count = len(list(overlays_dir.glob("*.md")))
+        else:
+            warnings.append("Missing .sibyl/project/prompt_overlays")
+
+        if not project_memory_path.exists():
+            warnings.append("Missing .sibyl/project/MEMORY.md")
+        if not agents_link.is_symlink() and agents_link.exists():
+            warnings.append(".claude/agents is not a symlink")
+        if not skills_link.is_symlink() and skills_link.exists():
+            warnings.append(".claude/skills is not a symlink")
+        if not settings_link.is_symlink() and settings_link.exists():
+            warnings.append(".claude/settings.local.json is not a symlink")
+        if not venv_link.is_symlink() and venv_link.exists():
+            warnings.append(".venv is not a symlink")
+
+        links_ok = all(
+            path.is_symlink()
+            for path in (agents_link, skills_link, settings_link, venv_link)
+        )
+        project_layer_ok = project_memory_path.exists() and overlays_dir.exists()
+        runtime_ready = bool(system_root) and links_ok and project_layer_ok and claude_generated
+        scaffold_ready = (
+            topic_exists
+            and config_exists
+            and spec_exists
+            and git_initialized
+            and not nested_project_dir_exists
+        )
+        migration_needed = legacy_status_schema or not runtime_ready or not scaffold_ready
+
+        return {
+            "runtime_ready": runtime_ready,
+            "scaffold_ready": scaffold_ready,
+            "migration_needed": migration_needed,
+            "legacy_status_schema": legacy_status_schema,
+            "system_root": system_root,
+            "project_memory_path": str(project_memory_path),
+            "project_memory_exists": project_memory_path.exists(),
+            "project_overlay_count": project_overlay_count,
+            "claude_md_generated": claude_generated,
+            "claude_md_path": str(claude_path),
+            "links": {
+                "agents": agents_link.is_symlink(),
+                "skills": skills_link.is_symlink(),
+                "settings": settings_link.is_symlink(),
+                "venv": venv_link.is_symlink(),
+            },
+            "topic_exists": topic_exists,
+            "config_exists": config_exists,
+            "spec_exists": spec_exists,
+            "nested_project_dir_exists": nested_project_dir_exists,
+            "git_initialized": git_initialized,
+            "gitignore_exists": gitignore_exists,
+            "warnings": warnings,
         }
