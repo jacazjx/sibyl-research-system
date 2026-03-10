@@ -11,6 +11,14 @@ from sibyl.dashboard.server import create_app
 from sibyl.workspace import Workspace
 
 
+@pytest.fixture(autouse=True)
+def clear_dashboard_auth(monkeypatch):
+    """Dashboard tests run with auth disabled unless a test opts in."""
+    import sibyl.dashboard.server as srv
+
+    monkeypatch.setattr(srv, "_AUTH_KEY", "")
+
+
 @pytest.fixture
 def workspace(tmp_path):
     """Create a runtime-ready test workspace."""
@@ -315,6 +323,13 @@ class TestAuth:
 
 class TestSystemEndpoint:
     def test_system_status(self, client):
+        evolution_dir = Path(os.environ["SIBYL_STATE_DIR"]) / "evolution"
+        (evolution_dir / "lessons").mkdir(parents=True, exist_ok=True)
+        (evolution_dir / "lessons" / "planner.md").write_text("lesson", encoding="utf-8")
+        (evolution_dir / "outcomes.jsonl").write_text(
+            '{"project":"demo","stage":"reflection","issues":["x"],"score":5.0,"notes":"n"}\n',
+            encoding="utf-8",
+        )
         r = client.get("/api/system/status")
         assert r.status_code == 200
         data = r.get_json()
@@ -326,6 +341,9 @@ class TestSystemEndpoint:
         assert data["tool_count"] == len(data["tool_names"])
         assert data["tools_dir"].endswith("/tools")
         assert data["workspaces_dir"].endswith("/workspaces")
+        assert data["evolution_dir"] == str(evolution_dir.resolve())
+        assert data["evolution_lesson_count"] == 1
+        assert data["evolution_outcome_count"] == 1
 
 
 class TestErrorHandling:

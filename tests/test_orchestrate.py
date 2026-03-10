@@ -10,7 +10,7 @@ from sibyl.orchestrate import (
     FarsOrchestrator, load_prompt, load_common_prompt,
     PAPER_SECTIONS, cli_checkpoint, cli_dispatch_tasks,
     project_marker_file, self_heal_monitor_script,
-    cli_experiment_status, migrate_workspace, collect_dashboard_data,
+    cli_experiment_status, cli_next, migrate_workspace, collect_dashboard_data,
 )
 from sibyl.workspace import Workspace
 
@@ -931,6 +931,51 @@ class TestPostReflectionHook:
         # At least one outcome should exist for this project
         assert any(r.get("project") == "test-proj" for r in outcomes)
 
+    def test_normalizes_action_plan_before_logging_and_evolution(self, make_orchestrator):
+        o = make_orchestrator(
+            stage="reflection",
+            iteration=2,
+            lark_enabled=False,
+            evolution_enabled=True,
+        )
+        o.ws.write_file("supervisor/review_writing.md", "score: 7.0")
+        o.ws.write_file(
+            "reflection/action_plan.json",
+            json.dumps(
+                {
+                    "issues_classified": [
+                        {
+                            "description": "Need stronger literature comparison",
+                            "category": "research",
+                            "severity": "critical",
+                            "status": "ongoing",
+                        }
+                    ],
+                    "quality_trajectory": "divergent",
+                    "success_patterns": ["Clear ablation table"],
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        o.record_result("reflection")
+
+        action_plan = json.loads(o.ws.read_file("reflection/action_plan.json"))
+        issue = action_plan["issues_classified"][0]
+        assert issue["category"] == "analysis"
+        assert issue["severity"] == "high"
+        assert issue["status"] == "recurring"
+        assert issue["issue_key"].startswith("analysis:")
+        assert action_plan["quality_trajectory"] == "stagnant"
+
+        from sibyl.evolution import EvolutionEngine
+
+        engine = EvolutionEngine()
+        outcomes = engine._load_outcomes()
+        record = [entry for entry in outcomes if entry.get("project") == "test-proj"][0]
+        assert record["classified_issues"][0]["category"] == "analysis"
+        assert record["classified_issues"][0]["severity"] == "high"
+
 
 # ══════════════════════════════════════════════
 # CLI helpers
@@ -944,6 +989,21 @@ class TestCLI:
         output = json.loads(capsys.readouterr().out)
         assert output["project_name"] == "test-cli-proj"
         assert "workspace_path" in output
+
+    def test_cli_next_logs_current_iteration(self, tmp_path, capsys):
+        ws = Workspace(tmp_path, "iter-log-proj")
+        ws.write_file("topic.txt", "test research topic")
+        ws.update_stage("reflection")
+        ws.update_iteration(3)
+
+        cli_next(str(ws.root))
+        capsys.readouterr()
+
+        events = (ws.root / "logs" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(events) == 1
+        event = json.loads(events[0])
+        assert event["event"] == "stage_start"
+        assert event["iteration"] == 3
 
     def test_cli_init_spec(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
@@ -1263,6 +1323,35 @@ class TestPromptLoading:
         prompt = load_prompt("planner")
 
         assert "Project overlay: reuse the frozen baseline." in prompt
+
+    def test_load_prompt_uses_contextual_evolution_overlay(self, tmp_path):
+        from sibyl.evolution import EvolutionEngine
+
+        ws = Workspace(tmp_path, "context-overlay-proj")
+        ws.update_stage("writing_sections")
+        ws.write_file("topic.txt", "tighten paper clarity")
+
+        engine = EvolutionEngine()
+        for _ in range(3):
+            engine.record_outcome(
+                "cross-project-a",
+                "reflection",
+                ["SSH connection failed"],
+                5.0,
+            )
+        for _ in range(3):
+            engine.record_outcome(
+                "cross-project-b",
+                "reflection",
+                ["Paper writing clarity issues"],
+                6.0,
+            )
+
+        prompt = load_prompt("section_writer", workspace_path=ws.root)
+
+        assert "# 经验教训 (上下文过滤)" in prompt
+        assert "Paper writing clarity issues" in prompt
+        assert "SSH connection failed" not in prompt
 
     def test_sequential_writer_requires_figures_block(self):
         prompt = load_prompt("sequential_writer")
