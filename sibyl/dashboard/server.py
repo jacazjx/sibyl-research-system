@@ -17,7 +17,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, abort
 
-from sibyl._paths import REPO_ROOT, SYSTEM_EVOLUTION_DIR
+from sibyl._paths import REPO_ROOT, get_system_evolution_dir
 from sibyl.config import Config
 
 # Ensure common types are registered
@@ -100,7 +100,7 @@ def create_app(config: Config | None = None) -> Flask:
     def _collect_system_status() -> dict:
         projects = _list_project_metadata()
         repo_tools = _list_repo_tools()
-        evolution_dir = SYSTEM_EVOLUTION_DIR
+        evolution_dir = get_system_evolution_dir()
         outcomes_path = evolution_dir / "outcomes.jsonl"
         outcomes_count = 0
         if outcomes_path.exists():

@@ -1829,22 +1829,25 @@ class FarsOrchestrator:
     def _post_reflection_hook(self):
         """Process reflection agent outputs: log iteration, record evolution, generate overlay."""
         from sibyl.reflection import IterationLogger
-        from sibyl.evolution import EvolutionEngine
+        from sibyl.evolution import EvolutionEngine, IssueCategory, normalize_issue_entry
 
         iteration = self.ws.get_status().iteration
         logger = IterationLogger(self.ws.root)
 
-        # Read reflection agent's structured output
-        action_plan_raw = self.ws.read_file("reflection/action_plan.json")
-        classified_issues = []
-        success_patterns = []
-        if action_plan_raw:
-            try:
-                action_plan = json.loads(action_plan_raw)
-                classified_issues = action_plan.get("issues_classified", [])
-                success_patterns = action_plan.get("success_patterns", [])
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Read reflection agent's structured output and normalize it back onto disk
+        action_plan = _load_workspace_action_plan(
+            self.ws,
+            "reflection/action_plan.json",
+            persist_normalized=True,
+        ) or {}
+        classified_issues = [
+            issue
+            for issue in action_plan.get("issues_classified", [])
+            if issue.get("status") != "fixed"
+        ]
+        success_patterns = action_plan.get("success_patterns", [])
+        issues_fixed = list(action_plan.get("issues_fixed", []))
+        quality_trajectory = action_plan.get("quality_trajectory", "stagnant")
 
         # Fallback: read supervisor issues if reflection agent didn't produce classified issues
         if not classified_issues:
@@ -1852,34 +1855,52 @@ class FarsOrchestrator:
             if issues_raw:
                 try:
                     issues_data = json.loads(issues_raw)
-                    from sibyl.evolution import IssueCategory
-                    classified_issues = [
-                        {
-                            "description": i.get("description", ""),
-                            "category": IssueCategory.classify(i.get("description", "")).value,
-                            "severity": i.get("severity", "medium"),
-                        }
-                        for i in issues_data
-                    ]
+                    for issue in issues_data:
+                        normalized_issue = normalize_issue_entry(
+                            {
+                                "description": issue.get("description", ""),
+                                "category": IssueCategory.classify(
+                                    issue.get("description", "")
+                                ).value,
+                                "severity": issue.get("severity", "medium"),
+                                "status": issue.get("status", "new"),
+                            }
+                        )
+                        if normalized_issue is not None and normalized_issue.get("status") != "fixed":
+                            classified_issues.append(normalized_issue)
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-        issues_found = [ci.get("description", "") for ci in classified_issues]
+        issues_found = [
+            issue.get("description", "")
+            for issue in classified_issues
+            if issue.get("description")
+        ]
 
         # Detect issues_fixed: compare with previous iteration's issues
-        issues_fixed = []
-        try:
-            prev_plan_raw = self.ws.read_file("reflection/prev_action_plan.json")
-            if prev_plan_raw:
-                prev_plan = json.loads(prev_plan_raw)
-                prev_issues = {
-                    i.get("description", "").lower().strip()
-                    for i in prev_plan.get("issues_classified", [])
-                }
-                current_issues = {d.lower().strip() for d in issues_found}
-                issues_fixed = list(prev_issues - current_issues)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        prev_plan = _load_workspace_action_plan(
+            self.ws,
+            "reflection/prev_action_plan.json",
+        ) or {}
+        prev_issues_by_key: dict[str, str] = {}
+        for issue in prev_plan.get("issues_classified", []):
+            if issue.get("status") == "fixed":
+                continue
+            issue_key = str(issue.get("issue_key", "")).strip()
+            description = str(issue.get("description", "")).strip()
+            if issue_key and description and issue_key not in prev_issues_by_key:
+                prev_issues_by_key[issue_key] = description
+        current_issue_keys = {
+            str(issue.get("issue_key", "")).strip()
+            for issue in classified_issues
+            if issue.get("issue_key")
+        }
+        inferred_fixed = [
+            description
+            for issue_key, description in prev_issues_by_key.items()
+            if issue_key not in current_issue_keys
+        ]
+        issues_fixed = list(dict.fromkeys([*issues_fixed, *inferred_fixed]))
 
         # Extract score
         supervisor_review = self.ws.read_file("supervisor/review_writing.md") or ""
@@ -1898,7 +1919,13 @@ class FarsOrchestrator:
                 issues_found=issues_found[:10],
                 issues_fixed=issues_fixed[:10],
                 quality_score=score,
-                notes=json.dumps({"classified_issues": classified_issues[:10]}, ensure_ascii=False),
+                notes=json.dumps(
+                    {
+                        "classified_issues": classified_issues[:10],
+                        "quality_trajectory": quality_trajectory,
+                    },
+                    ensure_ascii=False,
+                ),
             )
         except Exception as e:
             self.ws.add_error(f"Reflection logging failed: {e}")
@@ -1908,11 +1935,13 @@ class FarsOrchestrator:
             critic_feedback = self.ws.read_file("critic/critique_writing.md") or ""
             reflection_md = self.ws.read_file("reflection/reflection.md") or ""
             fixed_str = f"**Fixed**: {len(issues_fixed)}\n" if issues_fixed else ""
+            trajectory_str = f"**Trajectory**: {quality_trajectory}\n" if quality_trajectory else ""
             diary_entry = (
                 f"# Iteration {iteration}\n\n"
                 f"**Score**: {score}/10\n"
                 f"**Issues**: {len(issues_found)}\n"
-                f"{fixed_str}\n"
+                f"{fixed_str}"
+                f"{trajectory_str}\n"
                 f"## Reflection\n{reflection_md[:1000]}\n\n"
                 f"## Review Summary\n{supervisor_review[:500]}\n\n"
                 f"## Critique Summary\n{critic_feedback[:500]}\n"
@@ -1941,7 +1970,7 @@ class FarsOrchestrator:
                     stage="reflection",
                     issues=issues_found,
                     score=score,
-                    notes=f"Iteration {iteration}",
+                    notes=f"Iteration {iteration}; trajectory={quality_trajectory}",
                     classified_issues=classified_issues[:10],
                     success_patterns=success_patterns[:10],
                 )
@@ -2005,22 +2034,18 @@ class FarsOrchestrator:
         max_iters_cap = self.config.max_iterations_cap
         if max_iters_cap > 0:
             max_iters_cap = max(max_iters_cap, max_iters)
-        action_plan_raw = self.ws.read_file("reflection/action_plan.json")
-        if action_plan_raw:
-            try:
-                action_plan = json.loads(action_plan_raw)
-                v = action_plan.get("suggested_threshold_adjustment")
-                if isinstance(v, (int, float)) and 1.0 <= v <= 10.0:
-                    threshold = float(v)
-                v = action_plan.get("suggested_max_iterations")
-                if (
-                    isinstance(v, int)
-                    and v >= 2
-                    and (max_iters_cap <= 0 or v <= max_iters_cap)
-                ):
-                    max_iters = v
-            except (json.JSONDecodeError, TypeError):
-                pass
+        action_plan = _load_workspace_action_plan(self.ws, persist_normalized=True)
+        if action_plan:
+            v = action_plan.get("suggested_threshold_adjustment")
+            if isinstance(v, (int, float)) and 1.0 <= v <= 10.0:
+                threshold = float(v)
+            v = action_plan.get("suggested_max_iterations")
+            if (
+                isinstance(v, int)
+                and v >= 2
+                and (max_iters_cap <= 0 or v <= max_iters_cap)
+            ):
+                max_iters = v
         return score, threshold, max_iters
 
     def _get_next_stage(self, current_stage: str, result: str = "",

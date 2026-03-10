@@ -7,6 +7,13 @@ from sibyl.orchestrate import FarsOrchestrator
 from sibyl.workspace import Workspace
 
 
+@pytest.fixture(autouse=True)
+def isolated_system_state(tmp_path, monkeypatch):
+    """Keep mutable global Sibyl state isolated per test run."""
+    state_dir = tmp_path / "system-state"
+    monkeypatch.setenv("SIBYL_STATE_DIR", str(state_dir))
+
+
 @pytest.fixture
 def tmp_ws(tmp_path):
     """Create a temporary workspace with basic setup."""
