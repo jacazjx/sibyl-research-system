@@ -88,21 +88,10 @@ from sibyl.orchestrate import cli_sentinel_config
 cli_sentinel_config('$WORKSPACE')
 " 2>/dev/null) || return 1
 
-    local has_running stage paused
-    has_running=$(echo "$config_output" | jq -r '.has_running_experiments')
-    stage=$(echo "$config_output" | jq -r '.stage')
-    paused=$(echo "$config_output" | jq -r '.paused')
+    local should_keep_running
+    should_keep_running=$(echo "$config_output" | jq -r '.should_keep_running')
 
-    # Active if has running experiments
-    if [[ "$has_running" == "true" ]]; then
-        return 0
-    fi
-
-    # Active if stage is ongoing and not paused/done/init
-    if [[ "$paused" == "false" ]] && \
-       [[ "$stage" != "done" ]] && \
-       [[ "$stage" != "init" ]] && \
-       [[ "$stage" != "" ]]; then
+    if [[ "$should_keep_running" == "true" ]]; then
         return 0
     fi
 

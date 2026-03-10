@@ -15,8 +15,67 @@ class WorkspaceStatus:
     updated_at: float = 0.0
     iteration: int = 0
     errors: list[dict] = field(default_factory=list)
-    paused_at: float = 0.0  # 0 = not paused, >0 = pause timestamp
+    paused: bool = False
+    paused_at: float | None = None
+    stop_requested: bool = False
+    stop_requested_at: float | None = None
     iteration_dirs: bool = False  # True = iteration subdirectory mode
+
+
+def _normalize_status_flag(value: object, fallback: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no", "", "none", "null"}:
+            return False
+    return fallback
+
+
+def _normalize_status_timestamp(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def workspace_status_from_data(data: dict | None) -> WorkspaceStatus:
+    """Normalize old/new status.json formats into the current schema."""
+    raw = data or {}
+    known = {f.name for f in dataclasses.fields(WorkspaceStatus)}
+    filtered = {k: v for k, v in raw.items() if k in known}
+
+    paused_at = _normalize_status_timestamp(raw.get("paused_at"))
+    stop_requested_at = _normalize_status_timestamp(raw.get("stop_requested_at"))
+    stop_requested = _normalize_status_flag(
+        raw.get("stop_requested"),
+        stop_requested_at is not None,
+    )
+    paused = _normalize_status_flag(
+        raw.get("paused"),
+        paused_at is not None,
+    )
+
+    # Manual stop dominates legacy pause markers; only one state should be active.
+    if stop_requested:
+        paused = False
+
+    filtered["paused"] = paused
+    filtered["paused_at"] = paused_at if paused else None
+    filtered["stop_requested"] = stop_requested
+    filtered["stop_requested_at"] = stop_requested_at if stop_requested else None
+    return WorkspaceStatus(**filtered)
 
 
 class Workspace:
@@ -198,14 +257,11 @@ class Workspace:
             if tmp.exists():
                 try:
                     data = json.loads(tmp.read_text(encoding="utf-8"))
-                    known = {f.name for f in dataclasses.fields(WorkspaceStatus)}
-                    return WorkspaceStatus(**{k: v for k, v in data.items() if k in known})
+                    return workspace_status_from_data(data)
                 except (json.JSONDecodeError, OSError):
                     pass
             return WorkspaceStatus(started_at=time.time())
-        known = {f.name for f in dataclasses.fields(WorkspaceStatus)}
-        filtered = {k: v for k, v in data.items() if k in known}
-        return WorkspaceStatus(**filtered)
+        return workspace_status_from_data(data)
 
     def update_stage(self, stage: str):
         status = self.get_status()
@@ -232,21 +288,37 @@ class Workspace:
 
     def pause(self, reason: str = "rate_limit"):
         status = self.get_status()
-        status.paused_at = time.time()
+        now = time.time()
+        if reason == "user_stop":
+            status.paused = False
+            status.paused_at = None
+            status.stop_requested = True
+            status.stop_requested_at = now
+        else:
+            status.paused = True
+            status.paused_at = now
+            status.stop_requested = False
+            status.stop_requested_at = None
         self._save_status(status)
         self.write_file("logs/pause_log.jsonl",
             (self.read_file("logs/pause_log.jsonl") or "") +
-            json.dumps({"time": time.time(), "reason": reason,
+            json.dumps({"time": now, "reason": reason,
                          "stage": status.stage, "iteration": status.iteration},
                         ensure_ascii=False) + "\n")
 
     def resume(self):
         status = self.get_status()
-        status.paused_at = 0.0
+        status.paused = False
+        status.paused_at = None
+        status.stop_requested = False
+        status.stop_requested_at = None
         self._save_status(status)
 
     def is_paused(self) -> bool:
-        return self.get_status().paused_at > 0
+        return self.get_status().paused
+
+    def is_stop_requested(self) -> bool:
+        return self.get_status().stop_requested
 
     @property
     def active_root(self) -> Path:
@@ -550,6 +622,8 @@ class Workspace:
             "name": self.name,
             "stage": status.stage,
             "iteration": status.iteration,
+            "paused": status.paused,
+            "stop_requested": status.stop_requested,
             "errors": len(status.errors),
             "total_files": len(files),
             "has_proposal": has_proposal,

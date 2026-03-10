@@ -33,6 +33,11 @@ class TestWorkspaceInit:
         assert status.iteration == 0
         assert status.errors == []
         assert status.started_at > 0
+        raw = json.loads((ws.root / "status.json").read_text(encoding="utf-8"))
+        assert raw["paused"] is False
+        assert raw["paused_at"] is None
+        assert raw["stop_requested"] is False
+        assert raw["stop_requested_at"] is None
 
     def test_idempotent_init(self, tmp_path):
         ws1 = Workspace(tmp_path, "proj")
@@ -92,23 +97,92 @@ class TestWorkspaceStatus:
 
     def test_unknown_fields_ignored(self, tmp_ws):
         data = {"stage": "planning", "iteration": 1, "started_at": 1.0,
-                "updated_at": 1.0, "errors": [], "paused_at": 0.0,
+                "updated_at": 1.0, "errors": [], "paused": False,
+                "paused_at": None, "stop_requested": False,
+                "stop_requested_at": None,
                 "future_field": "should_be_ignored"}
         (tmp_ws.root / "status.json").write_text(
             json.dumps(data), encoding="utf-8"
         )
         status = tmp_ws.get_status()
         assert status.stage == "planning"
+        assert status.paused is False
+        assert status.stop_requested is False
+
+    def test_legacy_numeric_pause_schema_still_loads(self, tmp_ws):
+        data = {"stage": "planning", "iteration": 1, "started_at": 1.0,
+                "updated_at": 1.0, "errors": [], "paused_at": 123.0,
+                "stop_requested_at": 0.0, "iteration_dirs": False}
+        (tmp_ws.root / "status.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+        status = tmp_ws.get_status()
+        assert status.paused is True
+        assert status.paused_at == 123.0
+        assert status.stop_requested is False
+        assert status.stop_requested_at is None
+
+    def test_legacy_numeric_stop_schema_still_loads(self, tmp_ws):
+        data = {"stage": "planning", "iteration": 1, "started_at": 1.0,
+                "updated_at": 1.0, "errors": [], "paused_at": 222.0,
+                "stop_requested_at": 333.0, "iteration_dirs": False}
+        (tmp_ws.root / "status.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+        status = tmp_ws.get_status()
+        assert status.paused is False
+        assert status.paused_at is None
+        assert status.stop_requested is True
+        assert status.stop_requested_at == 333.0
 
 
 class TestWorkspacePause:
     def test_pause_and_resume(self, tmp_ws):
         assert not tmp_ws.is_paused()
+        assert not tmp_ws.is_stop_requested()
         tmp_ws.pause("rate_limit")
         assert tmp_ws.is_paused()
-        assert tmp_ws.get_status().paused_at > 0
+        assert not tmp_ws.is_stop_requested()
+        status = tmp_ws.get_status()
+        assert status.paused is True
+        assert status.paused_at is not None
+        assert status.stop_requested is False
+        assert status.stop_requested_at is None
         tmp_ws.resume()
+        resumed = tmp_ws.get_status()
         assert not tmp_ws.is_paused()
+        assert not tmp_ws.is_stop_requested()
+        assert resumed.paused is False
+        assert resumed.paused_at is None
+        assert resumed.stop_requested is False
+        assert resumed.stop_requested_at is None
+
+    def test_user_stop_sets_stop_requested(self, tmp_ws):
+        tmp_ws.pause("user_stop")
+        status = tmp_ws.get_status()
+        assert status.paused is False
+        assert status.paused_at is None
+        assert status.stop_requested is True
+        assert status.stop_requested_at is not None
+        assert not tmp_ws.is_paused()
+        assert tmp_ws.is_stop_requested()
+        tmp_ws.resume()
+        assert not tmp_ws.is_stop_requested()
+
+    def test_non_stop_pause_clears_previous_stop_marker(self, tmp_ws):
+        tmp_ws.pause("user_stop")
+        assert tmp_ws.is_stop_requested()
+        tmp_ws.pause("rate_limit")
+        assert not tmp_ws.is_stop_requested()
+        assert tmp_ws.is_paused()
+
+    def test_pause_writes_new_schema_to_disk(self, tmp_ws):
+        tmp_ws.pause("rate_limit")
+        raw = json.loads((tmp_ws.root / "status.json").read_text(encoding="utf-8"))
+        assert raw["paused"] is True
+        assert raw["paused_at"] is not None
+        assert raw["stop_requested"] is False
+        assert raw["stop_requested_at"] is None
 
     def test_pause_writes_log(self, tmp_ws):
         tmp_ws.update_stage("planning")

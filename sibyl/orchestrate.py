@@ -17,7 +17,7 @@ from dataclasses import dataclass, asdict
 import yaml
 
 from sibyl.config import Config
-from sibyl.workspace import Workspace
+from sibyl.workspace import Workspace, workspace_status_from_data
 
 PAPER_SECTIONS = [
     ("intro", "Introduction"),
@@ -245,7 +245,7 @@ class AgentTask:
 @dataclass
 class Action:
     """An action for the main Claude Code session to execute."""
-    action_type: str  # "skill", "skills_parallel", "agents_parallel", "agent_single", "team", "bash", "gpu_poll", "experiment_wait", "done", "paused"
+    action_type: str  # "skill", "skills_parallel", "agents_parallel", "agent_single", "team", "bash", "gpu_poll", "experiment_wait", "done", "stopped"
     agents: list[dict] | None = None  # for legacy agent actions
     skills: list[dict] | None = None  # for fork skill actions: [{"name": "sibyl-xxx", "args": "..."}]
     team: dict | None = None  # for Agent Teams: {"prompt": "...", "teammates": [{"role": "...", "prompt": "..."}], "require_plan_approval": bool}
@@ -385,14 +385,22 @@ class FarsOrchestrator:
         self.workspace_path = str(self.ws.active_root)
         status = self.ws.get_status()
 
-        # Check pause state
-        if status.paused_at > 0:
+        if status.stop_requested:
+            stopped_at = (
+                f"项目已于 {time.strftime('%H:%M', time.localtime(status.stop_requested_at))} 手动停止。"
+                if status.stop_requested_at is not None else
+                "项目已手动停止。"
+            )
             return asdict(Action(
-                action_type="paused",
-                description=f"项目已暂停（{time.strftime('%H:%M', time.localtime(status.paused_at))}）。"
-                            f"等待额度恢复后自动继续。",
+                action_type="stopped",
+                description=f"{stopped_at}使用 /sibyl-research:resume 重新进入自治循环。",
                 stage=status.stage,
             ))
+
+        # Legacy pause markers should never stall the autonomous loop.
+        if status.paused:
+            self.ws.resume()
+            status = self.ws.get_status()
 
         stage = status.stage
         topic = self.ws.read_file("topic.txt") or ""
@@ -1999,7 +2007,7 @@ def _write_sentinel_heartbeat(workspace_path: str, stage: str, action: str):
     }))
 
 
-_LOOP_ACTION_TYPES = {"experiment_wait", "gpu_poll", "paused"}
+_LOOP_ACTION_TYPES = {"experiment_wait", "gpu_poll"}
 
 
 def _write_breadcrumb(workspace_path: str, action_dict: dict | None = None,
@@ -2066,14 +2074,15 @@ def cli_record(workspace_path: str, stage: str, result: str = "",
 
 
 def cli_pause(workspace_path: str, reason: str = "rate_limit"):
-    """CLI: Pause a project."""
+    """CLI: Write a legacy pause marker or manual stop marker."""
     o = FarsOrchestrator(workspace_path)
     o.ws.pause(reason)
-    print(json.dumps({"status": "paused", "stage": o.ws.get_status().stage}))
+    status_value = "stopped" if reason == "user_stop" else "paused"
+    print(json.dumps({"status": status_value, "stage": o.ws.get_status().stage}))
 
 
 def cli_resume(workspace_path: str):
-    """CLI: Resume a paused project."""
+    """CLI: Clear stop/pause markers and resume a project."""
     o = FarsOrchestrator(workspace_path)
     o.ws.resume()
     print(json.dumps({"status": "resumed", "stage": o.ws.get_status().stage}))
@@ -2346,13 +2355,21 @@ def cli_sentinel_config(workspace_path: str):
     status_path = ws_path / "status.json"
     stage = ""
     paused = False
+    stop_requested = False
     if status_path.exists():
         try:
-            st = json.loads(status_path.read_text())
-            stage = st.get("stage", "")
-            paused = st.get("paused_at", 0) > 0
+            status = workspace_status_from_data(json.loads(status_path.read_text()))
+            stage = status.stage
+            paused = status.paused
+            stop_requested = status.stop_requested
         except (json.JSONDecodeError, OSError):
             pass
+
+    should_keep_running = (
+        not stop_requested and (
+            has_running or stage not in {"", "init", "done"}
+        )
+    )
 
     print(json.dumps({
         "workspace_path": str(ws_path),
@@ -2361,6 +2378,9 @@ def cli_sentinel_config(workspace_path: str):
         "has_running_experiments": has_running,
         "stage": stage,
         "paused": paused,
+        "stop_requested": stop_requested,
+        "auto_resume_pending": paused and not stop_requested,
+        "should_keep_running": should_keep_running,
     }, indent=2))
 
 

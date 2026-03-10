@@ -26,7 +26,10 @@ def workspace(tmp_path):
         "updated_at": time.time(),
         "iteration": 1,
         "errors": [],
-        "paused_at": 0.0,
+        "paused": False,
+        "paused_at": None,
+        "stop_requested": False,
+        "stop_requested_at": None,
         "iteration_dirs": False,
     }))
     (ws / "config.yaml").write_text(
@@ -88,6 +91,9 @@ class TestSentinelConfig:
         assert data["session_id"] == "test-sess"
         assert data["stage"] == "experiment_cycle"
         assert data["paused"] is False
+        assert data["stop_requested"] is False
+        assert data["auto_resume_pending"] is False
+        assert data["should_keep_running"] is True
         assert "heartbeat" in data
         assert data["heartbeat"]["stage"] == "experiment_cycle"
 
@@ -150,7 +156,10 @@ class TestSentinelConfig:
             "updated_at": time.time(),
             "iteration": 1,
             "errors": [],
+            "paused": True,
             "paused_at": time.time(),
+            "stop_requested": False,
+            "stop_requested_at": None,
             "iteration_dirs": False,
         }))
 
@@ -162,6 +171,59 @@ class TestSentinelConfig:
 
         data = json.loads(output)
         assert data["paused"] is True
+        assert data["stop_requested"] is False
+        assert data["auto_resume_pending"] is True
+        assert data["should_keep_running"] is True
+
+    def test_legacy_numeric_pause_schema_still_reports(self, workspace):
+        (workspace / "status.json").write_text(json.dumps({
+            "stage": "experiment_cycle",
+            "started_at": time.time(),
+            "updated_at": time.time(),
+            "iteration": 1,
+            "errors": [],
+            "paused_at": time.time(),
+            "stop_requested_at": 0.0,
+            "iteration_dirs": False,
+        }))
+
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        cli_sentinel_config(str(workspace))
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+
+        data = json.loads(output)
+        assert data["paused"] is True
+        assert data["stop_requested"] is False
+        assert data["auto_resume_pending"] is True
+        assert data["should_keep_running"] is True
+
+    def test_user_stop_is_reported(self, workspace):
+        (workspace / "status.json").write_text(json.dumps({
+            "stage": "experiment_cycle",
+            "started_at": time.time(),
+            "updated_at": time.time(),
+            "iteration": 1,
+            "errors": [],
+            "paused": False,
+            "paused_at": None,
+            "stop_requested": True,
+            "stop_requested_at": time.time(),
+            "iteration_dirs": False,
+        }))
+
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        cli_sentinel_config(str(workspace))
+        output = sys.stdout.getvalue()
+        sys.stdout = old_stdout
+
+        data = json.loads(output)
+        assert data["paused"] is False
+        assert data["stop_requested"] is True
+        assert data["auto_resume_pending"] is False
+        assert data["should_keep_running"] is False
 
 
 class TestBreadcrumb:

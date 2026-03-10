@@ -574,11 +574,25 @@ class TestActionGeneration:
         assert action["stage"] == "init"
         assert action["action_type"] == "bash"
 
-    def test_paused_returns_paused_action(self, make_orchestrator):
+    def test_paused_workspace_auto_resumes(self, make_orchestrator):
         o = make_orchestrator(stage="planning")
         o.ws.pause("rate_limit")
         action = o.get_next_action()
-        assert action["action_type"] == "paused"
+        assert action["action_type"] != "paused"
+        assert action["stage"] == "planning"
+        status = o.ws.get_status()
+        assert status.paused is False
+        assert status.paused_at is None
+
+    def test_user_stop_returns_stopped_action(self, make_orchestrator):
+        o = make_orchestrator(stage="planning")
+        o.ws.pause("user_stop")
+        action = o.get_next_action()
+        assert action["action_type"] == "stopped"
+        assert action["stage"] == "planning"
+        status = o.ws.get_status()
+        assert status.stop_requested is True
+        assert status.stop_requested_at is not None
 
     def test_done_returns_done_action(self, make_orchestrator):
         o = make_orchestrator(stage="done")
