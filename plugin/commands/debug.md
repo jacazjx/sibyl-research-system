@@ -85,51 +85,21 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_next; 
 
 4. **设置语言环境变量**：`export SIBYL_LANGUAGE=<action.language>`
 
-5. **执行该 action**（同编排循环逻辑）：
+5. **执行该 action**：
 
-   "skill": 使用 Skill 工具调用对应的 sibyl skill。
-   "team": 使用 Agent Team 进行结构化多 agent 协作讨论。
-     前置条件：需要环境变量 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-     action.team 包含结构化字段：team_name, teammates[], post_steps[], prompt
-     1. TeamCreate(team_name=action.team.team_name)
-     2. 遍历 action.team.teammates，为每个 teammate:
-        a. TaskCreate(
-             subject=teammate.name,
-             description="调用 Skill /teammate.skill teammate.args"
-           )
-        b. 记住返回的 taskId
-     3. 并行启动所有 teammates（使用 Agent 工具）:
-        对每个 teammate:
-          - team_name: action.team.team_name
-          - name: teammate.name
-          - subagent_type: "general-purpose"（需要完整工具访问）
-          - prompt: "你是 {teammate.name}，请查看 TaskList 找到分配给你的任务，
-                     用 TaskUpdate(status='in_progress') 标记开始，
-                     然后按 description 中的指令执行 Skill，
-                     完成后 TaskUpdate(status='completed')"
-     4. 由 Lead（当前 session）为每个 teammate 分配任务:
-        TaskUpdate(taskId=对应taskId, owner=teammate.name)
-        注意：Lead 主动分配，而非让 teammate 自行认领
-     5. 等待所有 teammates 完成:
-        teammate 完成任务后会自动发送 idle 通知到 lead，无需轮询。
-        当所有 teammate 都 idle 且 TaskList 显示全部 completed 时继续。
-     6. 逐一关闭各 teammate:
-        SendMessage(type="shutdown_request", recipient=teammate.name,
-                    content="任务完成，请关闭")
-        teammate 收到后用 SendMessage(type="shutdown_response", approve=true) 回复
-     7. 顺序执行 action.team.post_steps（如有）:
-        - type="skill": 使用 Skill 工具调用（如 sibyl-synthesizer）
-        - type="codex": 使用 Skill 工具调用 sibyl-codex-reviewer
-     8. 收集 teammates 和 post_steps 写入的产出文件
-   "bash": 执行 bash_command。
-   "lark_sync": 由 sibyl-lark-sync skill 自动执行飞书同步。
+   动态加载编排循环定义获取 action dispatch 规则：
+   ```bash
+   cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt; print(load_prompt('orchestration_loop'))"
+   ```
+
+   按编排循环定义中对应 action_type 的规则执行该 action。
    如果检测到遗留 `paused_at` / 手动 stop 标记，先自动 resume，再重新获取 action。
-   "done": 报告完成。
 
 5. **记录结果**：
 ```bash
 cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_record; cli_record('workspaces/PROJECT', 'STAGE')"
 ```
+记录 `cli_record` 返回的 JSON；如果包含 `sync_requested: true`，表示需要启动后台飞书同步。
 
 5.5. **阶段间处理**（cli_record 成功后执行）：
 
@@ -144,7 +114,7 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_record
    b. **更新研究日志**：追加一条记录到 WORKSPACE_PATH/logs/research_diary.md
       格式: ## [STAGE] YYYY-MM-DD HH:MM\n<汇总内容>\n
 
-   c. **飞书同步**：跳过，完整同步在 lark_sync 阶段由 skill 统一执行。
+   c. **飞书后台同步**：如果 `cli_record` 返回 `sync_requested: true`，后台启动 `sibyl-lark-sync workspaces/PROJECT`，不要等待它完成，也不要让它阻塞 debug 主流程。
 
    注意：debug 模式**不执行 /compact**，因为每次执行一步就停下来，新 session 自然有新上下文。
 

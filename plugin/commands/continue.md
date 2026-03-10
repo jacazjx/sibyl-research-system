@@ -41,10 +41,13 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_status
    cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_sentinel_session; cli_sentinel_session('workspaces/$ARGUMENTS', '${CLAUDE_CODE_SESSION_ID:-}')"
    ```
 
-4. **读取编排循环定义**：
-   读取 `plugin/commands/_orchestration-loop.md` 获取完整的 CLI API 参考、进度追踪和编排循环定义。
+4. **动态加载编排循环定义（支持热重载）**：
+   ```bash
+   cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt; print(load_prompt('orchestration_loop'))"
+   ```
+   读取输出内容获取完整的 CLI API 参考、进度追踪和编排循环定义。
 
 5. **进入编排循环**：
-   按 `_orchestration-loop.md` 中的 LOOP 流程执行，将所有 `WORKSPACE_PATH` 替换为 `workspaces/$ARGUMENTS`。
+   按加载的编排循环定义中的 LOOP 流程执行，将所有 `WORKSPACE_PATH` 替换为 `workspaces/$ARGUMENTS`。
 
    如果 breadcrumb 显示 `in_loop == true`（中断前在轮询循环中），直接调用 `cli_next` 获取最新状态并恢复轮询，不需要重新执行已完成的阶段。
