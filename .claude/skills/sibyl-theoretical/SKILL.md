@@ -7,7 +7,11 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep, Bash, WebSearch, WebFetch, mcp__arxiv-mcp-server__search_papers, mcp__arxiv-mcp-server__download_paper, mcp__arxiv-mcp-server__read_paper, mcp__google-scholar__search_google_scholar_key_words
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('theoretical'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('theoretical', workspace_path=ws))"`
+
+AGENT_NAME: sibyl-theoretical
+AGENT_TIER: sibyl-standard
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
 
 Workspace path: $ARGUMENTS[0]
 Topic (may contain spaces): $ARGUMENTS[1]

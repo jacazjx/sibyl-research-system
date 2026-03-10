@@ -7,7 +7,11 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('result_synthesizer'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('result_synthesizer', workspace_path=ws))"`
+
+AGENT_NAME: sibyl-result-synthesizer
+AGENT_TIER: sibyl-heavy
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
 
 Workspace path: $ARGUMENTS[0]
 

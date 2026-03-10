@@ -7,18 +7,22 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep, Bash
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('supervisor_decision'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('supervisor_decision', workspace_path=ws))"`
 
-Workspace path: $ARGUMENTS
+AGENT_NAME: sibyl-supervisor-decision
+AGENT_TIER: sibyl-heavy
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
+
+Workspace path: $ARGUMENTS[0]
 
 SPECIAL TASK: Analyze experiment results and the debate opinions.
 Read:
-- $ARGUMENTS/exp/results/summary.md
-- $ARGUMENTS/idea/result_debate/optimist.md
-- $ARGUMENTS/idea/result_debate/skeptic.md
-- $ARGUMENTS/idea/result_debate/strategist.md
-- $ARGUMENTS/idea/proposal.md
+- $ARGUMENTS[0]/exp/results/summary.md
+- $ARGUMENTS[0]/idea/result_debate/optimist.md
+- $ARGUMENTS[0]/idea/result_debate/skeptic.md
+- $ARGUMENTS[0]/idea/result_debate/strategist.md
+- $ARGUMENTS[0]/idea/proposal.md
 
 Determine: PIVOT or PROCEED?
-Write to $ARGUMENTS/supervisor/experiment_analysis.md
+Write to $ARGUMENTS[0]/supervisor/experiment_analysis.md
 End with exactly: DECISION: PIVOT or DECISION: PROCEED

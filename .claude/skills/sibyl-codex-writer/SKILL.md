@@ -7,7 +7,11 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep, Bash, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('codex_writer'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('codex_writer', workspace_path=ws))"`
+
+AGENT_NAME: sibyl-codex-writer
+AGENT_TIER: sibyl-standard
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
 
 Workspace path: $ARGUMENTS[0]
 Codex model override: $ARGUMENTS[1] (optional)

@@ -55,7 +55,7 @@ Sibyl-Test-User/ (FNmTflC2blA5OddeZHbc70OXnMc)
 | 论文 | `writing/paper.md` | docx | Markdown 版 |
 | 迭代日志 | `logs/iterations/master_log.jsonl` | bitable 记录 | 追加新行 |
 | 实验数据 | `exp/experiment_db.jsonl` | bitable 记录 | 追加新行 |
-| 系统进化 | `~/.claude/sibyl_evolution/` | docx | outcomes + global lessons |
+| 系统进化 | `sibyl-system/.sibyl/evolution/` | docx | outcomes + global lessons |
 
 ## 进度追踪
 
@@ -178,10 +178,10 @@ cat {workspace}/lark_sync/registry.json 2>/dev/null || echo "{}"
 ### Step 5: 同步系统进化记录
 
 读取以下文件（可能不存在，跳过即可）：
-- `~/.claude/sibyl_evolution/outcomes.jsonl` — 跨项目实验结论（每行一个 JSON）
-- `~/.claude/sibyl_evolution/global_lessons.md` — 全局经验总结
-- `~/.claude/sibyl_evolution/digest.json` — 聚合摘要
-- `~/.claude/sibyl_evolution/lessons/*.md` — 各 agent 的经验 overlay
+- `sibyl-system/.sibyl/evolution/outcomes.jsonl` — 跨项目实验结论（每行一个 JSON）
+- `sibyl-system/.sibyl/evolution/global_lessons.md` — 全局经验总结
+- `sibyl-system/.sibyl/evolution/digest.json` — 聚合摘要
+- `sibyl-system/.sibyl/evolution/lessons/*.md` — 各 agent 的经验 overlay
 
 **同步方式**：
 1. 检查 registry 中是否已有进化文档 token

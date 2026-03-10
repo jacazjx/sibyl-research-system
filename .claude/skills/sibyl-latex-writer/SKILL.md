@@ -7,7 +7,11 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep, Bash, mcp__ssh-mcp-server__execute-command, mcp__ssh-mcp-server__upload, mcp__ssh-mcp-server__download, mcp__ssh-mcp-server__list-servers
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('latex_writer'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('latex_writer', workspace_path=ws))"`
+
+AGENT_NAME: sibyl-latex-writer
+AGENT_TIER: sibyl-standard
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
 
 Workspace path: $ARGUMENTS[0]
 SSH server: $ARGUMENTS[1]

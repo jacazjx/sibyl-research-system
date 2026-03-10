@@ -56,6 +56,35 @@ def test_claude_runtime_assets_are_not_gitignored():
     assert _git_is_ignored(".claude/settings.local.json")
 
 
+def test_sibyl_skill_prompt_loaders_are_workspace_aware():
+    skill_files = sorted((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"))
+    checked = 0
+    for path in skill_files:
+        text = path.read_text(encoding="utf-8")
+        if "load_common_prompt" not in text:
+            continue
+        checked += 1
+        assert 'SIBYL_WORKSPACE="' in text, path
+        assert "ws = os.environ.get('SIBYL_WORKSPACE', '')" in text, path
+        assert "load_common_prompt(ws)" in text, path
+        assert "workspace_path=ws" in text, path
+
+    assert checked > 0
+
+
+def test_no_stale_user_home_evolution_paths_in_skills():
+    checked = [
+        *sorted((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md")),
+        *sorted((REPO_ROOT / "docs").glob("*.md")),
+    ]
+    offending = []
+    for path in checked:
+        text = path.read_text(encoding="utf-8")
+        if "~/.claude/sibyl_evolution" in text:
+            offending.append(str(path.relative_to(REPO_ROOT)))
+    assert not offending, offending
+
+
 def test_plugin_language_defaults_use_zh():
     """Language default 'zh' must appear in orchestration loop or command files."""
     # The language default is in the orchestration loop prompt (migrated to sibyl/prompts/)
@@ -148,6 +177,19 @@ def test_gpu_poll_docs_describe_never_stop_contract():
     for rel_path in ("sibyl/prompts/orchestration_loop.md",):
         text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
         assert "gpu_poll_timeout" not in text, f"{rel_path} still references gpu_poll_timeout pause"
+
+
+def test_experiment_wait_docs_match_runtime_contract():
+    """experiment_wait polling cadence should stay aligned across docs/runtime."""
+    required = {
+        "CLAUDE.md": ("<30min→2min", "30-120min→5min", ">120min→10min"),
+        "sibyl/prompts/orchestration_loop.md": ("剩余 ≤30min: 每 2min", "剩余 30-120min: 每 5min", "剩余 >120min: 每 10min"),
+    }
+
+    for rel_path, snippets in required.items():
+        text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
+        for snippet in snippets:
+            assert snippet in text, f"{rel_path} missing {snippet}"
 
 
 def test_codex_integration_is_explicit_opt_in_everywhere():

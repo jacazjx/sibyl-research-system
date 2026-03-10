@@ -7,10 +7,14 @@ user-invocable: false
 allowed-tools: Read, Write, Glob, Grep, Bash, mcp__codex__codex
 ---
 
-!`.venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; print(load_common_prompt()); print('---'); print(load_prompt('codex_reviewer'))"`
+!`SIBYL_WORKSPACE="$ARGUMENTS[0]" .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt, load_common_prompt; import os; ws = os.environ.get('SIBYL_WORKSPACE', ''); print(load_common_prompt(ws)); print('---'); print(load_prompt('codex_reviewer', workspace_path=ws))"`
 
-MODE: $ARGUMENTS[0]
-Workspace path: $ARGUMENTS[1]
+AGENT_NAME: sibyl-codex-reviewer
+AGENT_TIER: sibyl-light
+SIBYL_ROOT: /Users/cwan0785/sibyl-system
+
+Workspace path: $ARGUMENTS[0]
+MODE: $ARGUMENTS[1]
 Codex model override: $ARGUMENTS[2] (optional)
 
 ## Codex MCP 调用规范
