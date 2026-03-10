@@ -32,7 +32,7 @@ Resume a project from its current stage. Re-enters the orchestration loop.
 
 ### `/sibyl-research:resume <project>`
 
-Resume a **paused** project (paused by rate limits, errors, or manual `/stop`). Different from `continue` — this first calls `cli_resume()` to clear the paused state.
+Resume a manually stopped project, or clear any legacy pause marker before re-entering the loop. In normal autonomous operation, `cli_next()` auto-clears transient `paused_at` states, so `continue` is usually enough.
 
 ```
 /sibyl-research:resume my-project

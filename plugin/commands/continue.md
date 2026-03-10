@@ -29,6 +29,13 @@ argument-hint: "<project>"
 cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_status; cli_status('workspaces/$ARGUMENTS')"
 ```
 
+2.5. **如果检测到手动 stop 或遗留 pause 标记，先清理状态**：
+   - 如果 `cli_status` 输出里 `stop_requested == true`，立即执行：
+   ```bash
+   cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_resume; cli_resume('workspaces/$ARGUMENTS')"
+   ```
+   - 如果 `paused == true` 但 `stop_requested == false`，这是遗留暂停标记；可以直接继续，因为 `cli_next()` 会自动清除。如果你希望先显式清理，也可以调用同一条 `cli_resume`。
+
 3. **更新 Session ID 供 Sentinel 使用**：
    ```bash
    cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_sentinel_session; cli_sentinel_session('workspaces/$ARGUMENTS', '${CLAUDE_CODE_SESSION_ID:-}')"

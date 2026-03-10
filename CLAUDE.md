@@ -27,7 +27,7 @@ Sibyl 是一个全自动学术研究系统。它的唯一使命是**探索有价
 - **实验失败**: 记录失败原因，调整参数或方案，继续下一轮实验。
 - **质量不达标**: 分析差距，调整策略，开始新一轮迭代。
 - **上下文丢失**: 读取 breadcrumb.json 和 research_diary.md 恢复状态，继续执行。
-- **任何 "暂停" 状态**: 自动尝试恢复，等待条件满足后继续。
+- **任何非人工停机的 "暂停" 状态**: 自动尝试恢复，等待条件满足后继续。只有用户显式 `/sibyl-research:stop` 才应保持停止。
 
 ## 运行环境建议
 
@@ -83,7 +83,8 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 | `bash` | 执行 shell 命令 |
 | `gpu_poll` | GPU 轮询等待（见下方说明） |
 | `experiment_wait` | 实验运行中，自适应轮询等待完成（见下方说明） |
-| `done` / `paused` | 终止/暂停 |
+| `done` | 当前研究目标完成 |
+| `stopped` | 用户显式 `/stop` 后的人工停机状态 |
 
 ### GPU 轮询（`gpu_poll` action）
 当所有 GPU 被占用时，orchestrator 返回 `action_type: "gpu_poll"`，主 session 执行：
@@ -126,6 +127,10 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 - **状态面板**: 每次轮询后调用 `cli_experiment_status` 打印进度横幅
 - **动态调度**: 检测到任务完成后调用 `cli_dispatch_tasks` 派发排队任务
 - Action 包含 `experiment_monitor` 字段: `check_cmd`(DONE 检查), `pid_check_cmd`(进程存活), `progress_check_cmd`(详细进度), `status_cmd`(状态面板), `poll_interval_sec`(轮询间隔)
+
+### 暂停标记处理
+- `status.json` 使用显式 `paused` / `stop_requested` 布尔值，并保留可选时间戳用于诊断；若存在遗留 `paused_at` 标记，`cli_next()` 会自动清除并继续执行，不会把项目卡在“暂停等待人工恢复”
+- 只有用户显式执行 `/sibyl-research:stop` 时，系统才会记录人工停机请求并让 Sentinel 停止自动拉起
 
 ### 实验状态追踪与恢复（`experiment_state.json`）
 - `exp/experiment_state.json` 是实验任务生命周期的权威源（source of truth）

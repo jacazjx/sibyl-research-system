@@ -1,11 +1,11 @@
 ---
-description: "手动恢复暂停的研究项目"
+description: "手动恢复已停止或遗留暂停标记的研究项目"
 argument-hint: "<project>"
 ---
 
 # /sibyl-research:resume
 
-手动恢复暂停的项目并重新进入编排循环。
+手动恢复已停止的项目，或清除遗留暂停标记后重新进入编排循环。
 
 **所有用户可见的输出遵循项目语言配置（`action.language` / `config.language`）；论文正文与 LaTeX 始终使用英文。默认配置为中文。**
 

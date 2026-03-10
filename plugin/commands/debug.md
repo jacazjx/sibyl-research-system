@@ -58,7 +58,7 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_list_p
        ```bash
        cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_init; cli_init('TOPIC')"
        ```
-   - 如果项目处于 paused 状态，自动 resume：
+   - 如果项目存在遗留 paused 标记或已被手动 stop，自动 resume：
      ```bash
      cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_resume; cli_resume('workspaces/PROJECT')"
      ```
@@ -123,7 +123,7 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_next; 
      8. 收集 teammates 和 post_steps 写入的产出文件
    "bash": 执行 bash_command。
    "lark_sync": 由 sibyl-lark-sync skill 自动执行飞书同步。
-   "paused": 自动 resume 并重新获取 action。
+   如果检测到遗留 `paused_at` / 手动 stop 标记，先自动 resume，再重新获取 action。
    "done": 报告完成。
 
 5. **记录结果**：

@@ -51,7 +51,9 @@ The orchestrator returns actions that the main session executes:
 | `bash` | Shell command | `Bash` tool |
 | `gpu_poll` | Poll for free GPUs | SSH MCP → parse → write marker file |
 | `done` | Pipeline complete | Report to user |
-| `paused` | Auto-resume and continue | Automatically call `cli_resume` |
+| `stopped` | User explicitly halted the project | Resume only after `/sibyl-research:resume` |
+
+`status.json` now uses explicit `paused` / `stop_requested` booleans, with optional `paused_at` / `stop_requested_at` timestamps for diagnostics. Legacy numeric `*_at` markers are still read for backward compatibility, and transient `paused` state is auto-cleared by `cli_next()` so the control plane does not stall. Explicit `/sibyl-research:stop` remains the only supported manual halt path.
 
 ## Fork Skills Architecture
 
