@@ -6,6 +6,80 @@ set -e
 echo "=== Sibyl Research System Setup ==="
 
 cd "$(dirname "$0")"
+REPO_ROOT="$(pwd -P)"
+
+detect_shell_rc() {
+    case "${SHELL:-}" in
+        */zsh)
+            echo "${ZDOTDIR:-$HOME}/.zshrc"
+            ;;
+        */bash)
+            echo "$HOME/.bashrc"
+            ;;
+        *)
+            if [ -f "${ZDOTDIR:-$HOME}/.zshrc" ] || [ ! -f "$HOME/.bashrc" ]; then
+                echo "${ZDOTDIR:-$HOME}/.zshrc"
+            else
+                echo "$HOME/.bashrc"
+            fi
+            ;;
+    esac
+}
+
+configure_sibyl_root() {
+    local shell_rc="$1"
+    local action
+
+    action=$("$PY" - "$shell_rc" "$REPO_ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+rc_path = Path(sys.argv[1]).expanduser()
+repo_root = sys.argv[2]
+target_line = f'export SIBYL_ROOT="{repo_root}"'
+
+if rc_path.exists():
+    text = rc_path.read_text(encoding="utf-8")
+else:
+    text = ""
+
+existing = re.search(r"(?m)^[ \t]*export[ \t]+SIBYL_ROOT=(.*)$", text)
+if existing:
+    current_line = existing.group(0).strip()
+    if current_line == target_line:
+        print("already_set")
+    else:
+        updated = re.sub(
+            r"(?m)^[ \t]*export[ \t]+SIBYL_ROOT=.*$",
+            target_line,
+            text,
+            count=1,
+        )
+        rc_path.parent.mkdir(parents=True, exist_ok=True)
+        rc_path.write_text(updated, encoding="utf-8")
+        print("updated")
+else:
+    suffix = "" if not text or text.endswith("\n") else "\n"
+    block = f"{suffix}\n# Added by Sibyl setup\n{target_line}\n"
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    rc_path.write_text(text + block, encoding="utf-8")
+    print("added")
+PY
+)
+
+    case "$action" in
+        added)
+            echo "  ✓ Added SIBYL_ROOT to $shell_rc"
+            ;;
+        updated)
+            echo "  ✓ Updated SIBYL_ROOT in $shell_rc"
+            ;;
+        already_set)
+            echo "  ✓ SIBYL_ROOT already configured in $shell_rc"
+            ;;
+    esac
+}
 
 # ---------- Python environment ----------
 # Prefer python3.12; fall back to python3
@@ -162,6 +236,11 @@ fi
 # ---------- Environment variables check ----------
 echo ""
 echo "Checking environment variables..."
+SHELL_RC="$(detect_shell_rc)"
+echo "  Shell rc target: $SHELL_RC"
+configure_sibyl_root "$SHELL_RC"
+echo "    SIBYL_ROOT -> $REPO_ROOT"
+
 if [ -n "$ANTHROPIC_API_KEY" ]; then
     echo "  ✓ ANTHROPIC_API_KEY is set"
 else
@@ -182,10 +261,12 @@ echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "  1. Set missing environment variables (see above)"
+echo "     Open a new shell or run: source $SHELL_RC"
 echo "  2. Review config.yaml — adjust remote_base/max_gpus for your server"
 echo "     Codex stays disabled by default; enable it only after installing Codex MCP and OPENAI_API_KEY"
 echo "  3. Launch Claude Code with Sibyl plugin:"
-echo "       claude --plugin-dir ./plugin --dangerously-skip-permissions"
+echo "       cd \"$REPO_ROOT\""
+echo "       claude --plugin-dir \"$REPO_ROOT/plugin\" --dangerously-skip-permissions"
 echo "  4. Inside Claude Code:"
 echo "       /sibyl-research:init              # Create a research project"
 echo "       /sibyl-research:start <project>   # Start autonomous research"

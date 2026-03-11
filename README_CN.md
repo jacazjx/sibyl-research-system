@@ -66,6 +66,8 @@ cd sibyl-research-system
 chmod +x setup.sh && ./setup.sh    # 交互式：创建 venv、安装依赖、配置 MCP
 ```
 
+`setup.sh` 还会自动把 `export SIBYL_ROOT="..."` 写入或更新到你的 shell rc 文件（`~/.zshrc` / `~/.bashrc`），这样即使从 workspace 根目录启动 Claude，也能定位到仓库内的插件和工具。
+
 #### 2. 配置 MCP 服务器
 
 需要两个 MCP 服务器。`setup.sh` 会交互式配置，但手动配置时更推荐使用 `claude mcp add --scope local ...`，这样配置默认只作用于当前仓库：
@@ -116,17 +118,31 @@ codex_enabled: false
 #### 4. 运行
 
 ```bash
-# 强烈建议：使用 --dangerously-skip-permissions 实现全自动运行
-claude --plugin-dir ./plugin --dangerously-skip-permissions
+# 如果你跳过了 setup.sh，需要手动设置；正常安装会自动写入 shell rc
+export SIBYL_ROOT=/path/to/sibyl-system
 
-# 在 Claude Code 中：
-/sibyl-research:init              # 创建研究项目
-/sibyl-research:start <project>   # 启动全自主研究循环
+# 仓库根目录：用于初始化、全局状态查看、迁移、evolve
+cd "$SIBYL_ROOT"
+tmux new -s sibyl-admin
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# 项目 workspace 根目录：真正运行该项目（推荐）
+cd "$SIBYL_ROOT/workspaces/my-project"
+tmux new -s sibyl-my-project
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# 在从 workspaces/my-project 启动的 Claude Code 中：
+/sibyl-research:start spec.md     # 用当前 workspace 的 spec 启动新项目
+/sibyl-research:continue .        # 恢复当前 workspace
 ```
 
 > **为什么需要 `--dangerously-skip-permissions`？** Sibyl 编排 20+ 个 Agent 执行 19 个 Pipeline 阶段，每个阶段涉及数十次工具调用（文件读写、SSH 命令、MCP 服务器调用、子 Agent 生成等）。不加此标志时，Claude Code 几乎每次操作都会弹出权限确认提示，使全自主研究完全不可行——每轮迭代你需要手动确认数百次。此标志跳过所有权限确认，实现真正的端到端自动化。
 >
 > **⚠️ 风险提示**：此标志允许 Claude Code **不经确认**地执行**任意** shell 命令、读写**任意**文件、发起**任意** MCP 调用。仅在你信任系统且已审查过代码的环境中使用。不要在存放敏感数据的机器上使用（项目目录外的数据可能被访问）。建议在容器或虚拟机中运行以获得额外的隔离保护。
+
+> **Claude 应该从哪个目录启动？** 仓库根目录只建议用于初始化和全局维护（`/sibyl-research:init`、`:status`、`:migrate`、`:evolve`）。真正跑某个研究项目时，应该从该项目的 **workspace 根目录** `workspaces/<project>/` 启动 Claude，而不是仓库根目录，也不要从 `workspaces/<project>/current` 启动。这样 Claude 会直接加载该项目专属的 `CLAUDE.md`、`.claude/` 运行时链接、Ralph prompt 和项目记忆。
+
+> **多项目并行建议**：每个项目使用 **独立的 Claude session / tmux pane**，分别从各自的 `workspaces/<project>/` 根目录启动。例如 pane A 跑 `workspaces/ttt-dlm/`，pane B 跑 `workspaces/dlm-improve/`。不要让多个项目共用同一个 Claude pane/session；Sibyl 现在会把 pane/session 归属强绑定到项目。
 
 </details>
 
@@ -444,6 +460,7 @@ workspaces/<project>/
 
 - [OpenAI Codex CLI](https://github.com/openai/codex) — 独立交叉审查（显式开启 `codex_enabled: true`）
 - [Ralph Loop](https://github.com/anthropics/claude-code) — 自主迭代循环（Claude Code 插件）
+- [AI Research Skills](https://github.com/orchestra-research/ai-research-skills) — 85 个专业技能，覆盖模型微调、推理部署、评测、论文写作等。安装后，Sibyl 各 Agent 会自动发现相关技能并按需调用获取最佳实践指导。详见[配置指南](docs/setup-guide.md#step-10-ai-research-skills-optional)。
 
 ## 核心机制
 

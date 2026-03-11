@@ -3,6 +3,11 @@
 **Date:** 2026-03-10
 **Status:** Approved
 
+> Implementation note (2026-03-11): the runtime control-plane prompt is now compiled
+> with `render_control_plane_prompt('loop', workspace_path=...)`, rather than loaded
+> directly from `load_prompt('orchestration_loop')`. The markdown loop doc remains as
+> human reference material only.
+
 ## Problem
 
 Sibyl System's `plugin/commands/*.md` files don't support hot reloading in Claude Code. Two key issues:
@@ -20,7 +25,8 @@ Move all iterable logic from command files into `sibyl/prompts/` (hot-reloadable
 
 - **From:** `plugin/commands/_orchestration-loop.md`
 - **To:** `sibyl/prompts/orchestration_loop.md`
-- Commands (`start`, `resume`, `continue`, `debug`) load via `load_prompt('orchestration_loop')`
+- Commands (`start`, `resume`, `continue`, `debug`) now render the runtime loop prompt via
+  `render_control_plane_prompt('loop', workspace_path=...)`
 - Delete or replace original with a one-line pointer
 
 ### 2. Ralph Loop Prompt Deduplication

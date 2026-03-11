@@ -129,7 +129,7 @@ On shared servers, before each experiment batch:
 1. Orchestrator returns `action_type: "gpu_poll"`
 2. Main session SSH queries `nvidia-smi` on the server
 3. `parse_free_gpus()` identifies available GPUs
-4. Results written to a project-scoped marker such as `/tmp/sibyl_<project>_gpu_free.json`
+4. Results written to a workspace-scoped marker such as `/tmp/sibyl_<workspace_scope>_gpu_free.json`
 5. Next `cli_next()` reads the marker and assigns tasks
 
 ## Self-Evolution Engine
@@ -155,7 +155,9 @@ Each category maps to specific agents for targeted improvement.
 
 ### Overlay Generation
 
-Effective lessons are injected into agent prompts via `load_prompt(agent, overlay_content=...)`.
+Effective lessons are injected into agent prompts through the compiled prompt layer:
+`render_skill_prompt(agent, workspace_path=...)` builds the final prompt and appends
+contextual evolution lessons plus any project-specific overrides.
 
 ### Self-Check
 

@@ -1,5 +1,10 @@
 # Commands Hot Reload Implementation Plan
 
+> Historical implementation plan. The shipped runtime has since moved one step further:
+> control-plane prompts are now compiled with
+> `render_control_plane_prompt('loop', workspace_path=...)`, and `sibyl/prompts/orchestration_loop.md`
+> is retained as reference documentation rather than the direct runtime source of truth.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move iterable orchestration logic from non-hot-reloadable `plugin/commands/` into hot-reloadable `sibyl/prompts/` and Python orchestrator.

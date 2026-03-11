@@ -220,17 +220,28 @@ To detach: `Ctrl+B` then `D`. To reattach: `tmux attach -t sibyl`.
 
 **Tell the user**:
 ```bash
-# First, start a tmux session
-tmux new -s sibyl
+# setup.sh 会自动写入这一行；只有跳过 setup.sh 时才需要手动设置
+export SIBYL_ROOT=/path/to/sibyl-research-system
 
-# Then launch Claude Code with Sibyl plugin
-# --dangerously-skip-permissions is strongly recommended for fully autonomous operation
-claude --plugin-dir /path/to/sibyl-research-system/plugin --dangerously-skip-permissions
+# Repo root: setup / init / status / migrate / evolve
+cd "$SIBYL_ROOT"
+tmux new -s sibyl-admin
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# Workspace root: active project execution (recommended)
+cd "$SIBYL_ROOT/workspaces/my-project"
+tmux new -s sibyl-my-project
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 ```
 
 **Important**: Explain to the user that `--dangerously-skip-permissions` is strongly recommended because Sibyl involves hundreds of tool calls per iteration (file I/O, SSH, MCP, sub-agents). Without it, each call requires manual approval, making autonomous research impossible. However, ⚠️ warn them that this grants unrestricted execution — they should only use it on dedicated research machines and consider container/VM isolation.
 
 Replace `/path/to/sibyl-research-system` with the actual clone path.
+
+Also explain:
+- Repo root is for setup and global maintenance only.
+- Actual project runs should start from `workspaces/<project>/`, not from the repo root and not from `workspaces/<project>/current`.
+- Parallel projects should use one tmux pane/session per workspace root; do not reuse a single Claude pane across projects.
 
 **Verify**: After launching, type `/sibyl-research:status` — if it runs, the plugin is loaded.
 
@@ -276,6 +287,40 @@ If all pass, remind the user to launch inside tmux with `--dangerously-skip-perm
 ```
 /sibyl-research:init          # Create a project
 /sibyl-research:start <name>  # Start autonomous research
+```
+
+---
+
+## Step 10: AI Research Skills (Optional)
+
+**Goal**: Install the `@orchestra-research/ai-research-skills` skill pack so Sibyl agents can access expert guidance on ML tools and techniques (fine-tuning, inference, evaluation, paper writing, etc.).
+
+**This step is optional.** Sibyl works perfectly without it. The skill pack enhances agents by giving them on-demand access to best-practice knowledge for 85 ML topics.
+
+**Install**:
+```bash
+npx @anthropic-ai/claude-code-skill install @orchestra-research/ai-research-skills
+```
+
+**Verify**:
+```bash
+ls ~/.orchestra/skills/   # Should show category directories (01-model-architecture, 02-tokenization, ...)
+```
+
+If the directory exists and contains SKILL.md files, Sibyl will automatically detect them on the next run. No config change is needed — `orchestra_skills_enabled` defaults to `true`.
+
+**What happens after installation**: When any Sibyl agent starts (experimenter, planner, writer, etc.), its prompt automatically includes a compact "Available Technical Skills" table filtered by the current research topic. The agent can then invoke any listed skill via the `Skill` tool when it needs detailed guidance — for example, invoking `vllm` when setting up inference, or `peft` when configuring LoRA fine-tuning.
+
+**To disable** (without uninstalling):
+```yaml
+# In config.yaml
+orchestra_skills_enabled: false
+```
+
+**To customize**:
+```yaml
+orchestra_skills_dir: "~/.orchestra/skills"  # Custom install location
+orchestra_skills_max: 15                      # Max skills shown per agent (default: 15)
 ```
 
 ---

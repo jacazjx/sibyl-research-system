@@ -2,6 +2,12 @@
 
 All commands are prefixed with `/sibyl-research:` in Claude Code.
 
+## Launch Context
+
+- Repo root launch is best for setup and global maintenance commands such as `:init`, `:status`, `:migrate`, and `:evolve`.
+- Active project execution should start Claude from `workspaces/<project>/`, not from the repo root and not from `workspaces/<project>/current`.
+- For multi-project parallel execution, use one tmux pane/session per workspace root and one Claude instance per pane. Do not reuse a single Claude pane/session across multiple projects.
+
 ## Core Commands
 
 ### `/sibyl-research:init`

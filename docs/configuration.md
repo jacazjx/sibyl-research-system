@@ -171,6 +171,18 @@ See [Codex Integration](codex-integration.md) for full setup instructions.
 | `lark_enabled` | bool | `true` | Enable Feishu/Lark cloud document sync |
 | `evolution_enabled` | bool | `true` | Enable cross-project self-evolution engine |
 
+## Orchestra External Skills
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `orchestra_skills_enabled` | bool | `true` | Enable external skill index injection into agent prompts |
+| `orchestra_skills_dir` | string | `"~/.orchestra/skills"` | Directory containing Orchestra skill packs |
+| `orchestra_skills_max` | int | `15` | Maximum skills shown per agent prompt (filtered by topic relevance) |
+
+When enabled and `@orchestra-research/ai-research-skills` is installed, Sibyl agents automatically receive a compact table of relevant ML skills (fine-tuning, inference, evaluation, etc.) in their prompts. Agents can invoke these skills on demand via the `Skill` tool for expert guidance.
+
+See [setup guide](setup-guide.md#step-10-ai-research-skills-optional) for installation instructions.
+
 ## Model Routing
 
 Advanced: control which Claude model each agent tier uses.

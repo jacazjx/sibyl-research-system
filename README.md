@@ -68,6 +68,8 @@ cd sibyl-research-system
 chmod +x setup.sh && ./setup.sh    # Interactive: creates venv, installs deps, configures MCP
 ```
 
+`setup.sh` also adds or updates `export SIBYL_ROOT="..."` in your shell rc file so workspace-root Claude sessions can still resolve the repo plugin and tools.
+
 #### 2. Configure MCP Servers
 
 Two MCP servers are required. `setup.sh` configures them interactively, but for manual setup the preferred path is `claude mcp add --scope local ...` so the configuration stays repo-scoped:
@@ -118,18 +120,29 @@ Use `ssh_server: "default"` when `ssh-mcp-server` was registered with explicit `
 #### 4. Run
 
 ```bash
-# Strongly recommended: run inside tmux for persistent sessions
-tmux new -s sibyl
+# `setup.sh` normally writes this for you; set it manually only if you skipped setup.sh
+export SIBYL_ROOT=/path/to/sibyl-system
 
-# Strongly recommended: use --dangerously-skip-permissions for fully autonomous operation
-claude --plugin-dir ./plugin --dangerously-skip-permissions
+# Repo root: setup, init, status, migrate, evolve
+cd "$SIBYL_ROOT"
+tmux new -s sibyl-admin
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 
-# Inside Claude Code:
-/sibyl-research:init              # Create a research project
-/sibyl-research:start <project>   # Start autonomous research loop
+# Workspace root: actual project execution (recommended)
+cd "$SIBYL_ROOT/workspaces/my-project"
+tmux new -s sibyl-my-project
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# Inside Claude Code launched from workspaces/my-project:
+/sibyl-research:start spec.md     # New project from this workspace's spec
+/sibyl-research:continue .        # Resume the current workspace
 ```
 
 > **Why tmux?** Sibyl experiments can run for hours. Running inside tmux ensures the session persists through terminal disconnections. The Sentinel watchdog (auto-launched by `/sibyl-research:start`) runs in a sibling tmux pane and automatically restarts Claude Code if it crashes or goes idle — enabling truly unattended autonomous research.
+
+> **Which directory should Claude start in?** Use the **repo root** only for setup and global maintenance (`/sibyl-research:init`, `:status`, `:migrate`, `:evolve`). For an actual research run, start Claude from the target **workspace root** (`workspaces/<project>/`), not from the repo root and not from `workspaces/<project>/current`. This makes Claude load the workspace-specific `CLAUDE.md`, `.claude/` links, Ralph prompt, and project memory directly.
+
+> **Parallel projects:** run **one Claude session/pane per workspace root**. Example: pane A starts in `workspaces/ttt-dlm/`, pane B starts in `workspaces/dlm-improve/`. Do not reuse the same Claude pane/session across multiple projects; Sibyl now treats pane/session ownership as project-scoped.
 
 > **Why `--dangerously-skip-permissions`?** Sibyl orchestrates 20+ agents across 19 pipeline stages, each involving dozens of tool calls (file I/O, SSH commands, MCP server calls, sub-agent spawning). Without this flag, Claude Code will prompt for permission on nearly every operation, making autonomous research impossible — you'd need to approve hundreds of prompts per iteration. The flag skips all permission confirmations, enabling true end-to-end automation.
 >
@@ -450,6 +463,7 @@ See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and MCP regist
 
 - [OpenAI Codex CLI](https://github.com/openai/codex) — Independent cross-review (opt in with `codex_enabled: true`)
 - [Ralph Loop](https://github.com/anthropics/claude-code) — Autonomous iteration loop (Claude Code plugin)
+- [AI Research Skills](https://github.com/orchestra-research/ai-research-skills) — 85 expert skills covering fine-tuning, inference, evaluation, paper writing, and more. When installed, Sibyl agents automatically discover relevant skills and invoke them on demand for best-practice guidance. See [setup guide](docs/setup-guide.md#step-10-ai-research-skills-optional) for installation.
 
 ## Key Mechanisms
 

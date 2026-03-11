@@ -51,6 +51,7 @@ chmod +x setup.sh && ./setup.sh
 - Interactively configure SSH MCP server (GPU server host, user, SSH key)
 - Create a manual MCP JSON config only when no existing MCP JSON config is present
 - Create `config.yaml` with GPU server settings
+- Add or update `export SIBYL_ROOT="..."` in your shell rc file (`~/.zshrc` / `~/.bashrc`)
 - Check for required environment variables (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`)
 
 ### Option 2: Manual Setup
@@ -90,14 +91,25 @@ Sibyl relies on several MCP servers. `setup.sh` configures the required ones aut
 Sibyl is provided as a **Claude Code Plugin**. **Always run inside tmux** for persistent sessions:
 
 ```bash
-# Start a tmux session (or attach to existing)
-tmux new -s sibyl
+# `setup.sh` normally writes this for you; set it manually only if you skipped setup.sh
+export SIBYL_ROOT=/path/to/sibyl-research-system
 
-# Launch Claude Code with Sibyl plugin
-claude --plugin-dir /path/to/sibyl-research-system/plugin --dangerously-skip-permissions
+# Repo root: setup / init / status / migrate / evolve
+cd "$SIBYL_ROOT"
+tmux new -s sibyl-admin
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# Workspace root: actual project execution (recommended)
+cd "$SIBYL_ROOT/workspaces/my-project"
+tmux new -s sibyl-my-project
+claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 ```
 
 Replace `/path/to/sibyl-research-system` with your actual local path.
+
+For active research runs, start Claude from the target workspace root `workspaces/<project>/`, not from the repo root and not from `workspaces/<project>/current`. This loads the workspace-specific `CLAUDE.md`, project memory, Ralph prompt, and `.claude/` runtime links directly.
+
+For multi-project parallel execution, use one tmux session/window/pane per project and launch one Claude instance inside each workspace root. Do not reuse the same Claude pane/session across projects.
 
 > **`--dangerously-skip-permissions` is strongly recommended** for Sibyl to function as designed. Without it, Claude Code will prompt for permission on every tool call — file reads, SSH commands, MCP calls, agent spawns — making autonomous multi-stage research impractical (hundreds of manual approvals per iteration).
 >
@@ -143,7 +155,7 @@ You can also create project-specific overrides in `workspaces/<project>/config.y
 ### 3. Start Research
 
 ```bash
-/sibyl-research:start <project>
+/sibyl-research:start spec.md
 ```
 
 This enters the autonomous research loop. The system will:

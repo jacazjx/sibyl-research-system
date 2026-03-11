@@ -155,7 +155,8 @@ Sentinel 是纯 bash 看门狗脚本（`sibyl/sentinel.sh`），跑在 tmux 的 
   - 进程不存在 → `claude --resume <session_id>` + `/sibyl-research:continue`
   - 进程在但心跳 >5min 且无子进程 → 注入 `/sibyl-research:continue`
 - **退避机制**: 连续 3 次唤醒失败后暂停 6 分钟
-- **CLI**: `cli_sentinel_session(workspace, session_id)`, `cli_sentinel_config(workspace)`
+- **CLI**: `cli_sentinel_session(workspace, session_id, tmux_pane)`, `cli_sentinel_config(workspace)`
+- **隔离约束**: Session ID 和 tmux pane 都按规范化后的项目根路径登记；一个 Claude pane/session 只能归属一个项目
 - **启动**: `/sibyl-research:start` 和 `/sibyl-research:resume` 自动在 tmux 中启动
 - **停止**: `/sibyl-research:stop` 写入停止信号
 
@@ -185,6 +186,13 @@ Sentinel 是纯 bash 看门狗脚本（`sibyl/sentinel.sh`），跑在 tmux 的 
 - Agent tier 通过 `.claude/agents/sibyl-{heavy,standard,light}.md` 声明式配置
 - 纯轻量任务（交叉批评、结果辩论）自动使用 Sonnet
 - Codex 任务使用 `gpt-5.4-high`
+
+### Orchestra 外部技能集成（可选）
+- 安装 `@orchestra-research/ai-research-skills` 后（85 个 ML 专业技能），所有 Sibyl agent 的 prompt 自动注入相关技能索引
+- Agent 运行时可通过 `Skill` tool 按需调用（如 `vllm`、`peft`、`lm-evaluation-harness`）获取最佳实践
+- 双层过滤：按 agent 角色粗筛 + workspace topic 关键词细筛，每个 agent 最多注入 15 个最相关技能
+- 配置: `orchestra_skills_enabled: true`（默认）, `orchestra_skills_dir`, `orchestra_skills_max`
+- 不安装此技能包时系统正常运行，无任何影响
 
 ## 飞书同步（后台非阻塞）
 
