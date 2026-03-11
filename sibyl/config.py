@@ -1,5 +1,3 @@
-import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import yaml
@@ -44,7 +42,7 @@ class Config:
     max_gpus: int = 4  # max GPUs to use (picks any free ones, not fixed IDs)
     gpus_per_task: int = 1
     ssh_server: str = "default"
-    remote_base: str = "/home/user/sibyl_system"
+    remote_base: str = "/home/user/sibyl_system"  # CHANGE ME: your remote server path
 
     # GPU polling (for shared servers with other users)
     gpu_poll_enabled: bool = True
@@ -58,8 +56,8 @@ class Config:
     gpu_aggressive_threshold_pct: int = 25  # VRAM usage % below which GPU is "available"
 
     # Pilot experiments
-    pilot_samples: int = 16
-    pilot_timeout: int = 600  # 10 min
+    pilot_samples: int = 100
+    pilot_timeout: int = 900  # 15 min
     pilot_seeds: list[int] = field(default_factory=lambda: [42])
 
     # Full experiments
@@ -99,6 +97,11 @@ class Config:
     self_heal_interval_sec: int = 300   # scan interval (5 min)
     self_heal_max_attempts: int = 3     # circuit breaker threshold
 
+    # Orchestra external skills integration
+    orchestra_skills_enabled: bool = True
+    orchestra_skills_dir: str = "~/.orchestra/skills"
+    orchestra_skills_max: int = 15      # max skills injected per agent prompt
+
     # Model routing
     model_tiers: dict = field(default_factory=lambda: {
         "heavy":    "claude-opus-4-6",
@@ -118,12 +121,26 @@ class Config:
         # Everything else defaults to standard
     })
 
+    @staticmethod
+    def _resolve_local_path(raw_value: str, base_dir: Path) -> Path:
+        path = Path(raw_value).expanduser()
+        if not path.is_absolute():
+            path = (base_dir / path).resolve()
+        return path
+
+    @classmethod
+    def _from_data(cls, data: dict, *, base_dir: Path) -> "Config":
+        cfg = cls()
+        raw_workspaces_dir = str(data.get("workspaces_dir", cfg.workspaces_dir))
+        cfg.workspaces_dir = cls._resolve_local_path(raw_workspaces_dir, base_dir)
+        return cfg
+
     @classmethod
     def from_yaml(cls, path: str) -> "Config":
-        with open(path, encoding="utf-8") as f:
+        config_path = Path(path).expanduser().resolve()
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
-        cfg = cls()
-        cfg.workspaces_dir = Path(data.get("workspaces_dir", "workspaces")).expanduser()
+        cfg = cls._from_data(data, base_dir=config_path.parent)
         for agent_name in ["ideation", "planning", "experiment", "writing"]:
             if agent_name in data:
                 setattr(cfg, agent_name, AgentConfig(**data[agent_name]))
@@ -145,6 +162,7 @@ class Config:
             "iteration_dirs",
             "language",
             "self_heal_enabled", "self_heal_interval_sec", "self_heal_max_attempts",
+            "orchestra_skills_enabled", "orchestra_skills_dir", "orchestra_skills_max",
         ]:
             if key in data:
                 setattr(cfg, key, data[key])
@@ -152,6 +170,10 @@ class Config:
         for key in ["pilot_seeds", "full_seeds"]:
             if key in data:
                 setattr(cfg, key, data[key])
+        if "orchestra_skills_dir" in data:
+            cfg.orchestra_skills_dir = str(
+                cls._resolve_local_path(str(data["orchestra_skills_dir"]), config_path.parent)
+            )
         # Dict fields (model routing)
         for key in ["model_tiers", "agent_tier_map"]:
             if key in data:
@@ -192,22 +214,92 @@ class Config:
     def from_yaml_chain(cls, *paths: str) -> "Config":
         """Load config from multiple YAML files. Later files override earlier ones."""
         merged: dict = {}
+        workspaces_dir_base: Path | None = None
+        orchestra_skills_dir_base: Path | None = None
         for path in paths:
-            with open(path, encoding="utf-8") as f:
+            config_path = Path(path).expanduser().resolve()
+            with open(config_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
+            if "workspaces_dir" in data:
+                workspaces_dir_base = config_path.parent
+            if "orchestra_skills_dir" in data:
+                orchestra_skills_dir_base = config_path.parent
             for key, val in data.items():
                 if isinstance(val, dict) and isinstance(merged.get(key), dict):
                     merged[key].update(val)
                 else:
                     merged[key] = val
-        # Write merged data to a temp structure and reuse from_yaml logic
-        fd, tmp = tempfile.mkstemp(suffix=".yaml")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                yaml.dump(merged, f, allow_unicode=True)
-            return cls.from_yaml(tmp)
-        finally:
-            os.unlink(tmp)
+        if workspaces_dir_base is not None and "workspaces_dir" in merged:
+            merged["workspaces_dir"] = str(
+                cls._resolve_local_path(str(merged["workspaces_dir"]), workspaces_dir_base)
+            )
+        if orchestra_skills_dir_base is not None and "orchestra_skills_dir" in merged:
+            merged["orchestra_skills_dir"] = str(
+                cls._resolve_local_path(
+                    str(merged["orchestra_skills_dir"]),
+                    orchestra_skills_dir_base,
+                )
+            )
+        base_dir = Path(paths[-1]).expanduser().resolve().parent if paths else Path.cwd()
+        cfg = cls._from_data(merged, base_dir=base_dir)
+        for agent_name in ["ideation", "planning", "experiment", "writing"]:
+            if agent_name in merged:
+                setattr(cfg, agent_name, AgentConfig(**merged[agent_name]))
+        for key in [
+            "max_parallel_tasks", "experiment_timeout", "review_enabled",
+            "ssh_server", "remote_base", "gpus_per_task", "max_gpus",
+            "gpu_poll_enabled", "gpu_free_threshold_mb",
+            "gpu_poll_interval_sec", "gpu_poll_max_attempts",
+            "gpu_aggressive_mode", "gpu_aggressive_threshold_pct",
+            "pilot_samples", "pilot_timeout",
+            "debate_rounds", "writing_revision_rounds",
+            "lark_enabled", "evolution_enabled",
+            "idea_exp_cycles", "idea_validation_rounds",
+            "max_iterations", "max_iterations_cap",
+            "codex_enabled", "codex_model", "writing_mode", "codex_writing_model",
+            "experiment_mode", "server_codex_path", "server_claude_path",
+            "remote_env_type", "remote_conda_path", "remote_conda_env_name",
+            "iteration_dirs",
+            "language",
+            "self_heal_enabled", "self_heal_interval_sec", "self_heal_max_attempts",
+            "orchestra_skills_enabled", "orchestra_skills_dir", "orchestra_skills_max",
+        ]:
+            if key in merged:
+                setattr(cfg, key, merged[key])
+        for key in ["pilot_seeds", "full_seeds"]:
+            if key in merged:
+                setattr(cfg, key, merged[key])
+        for key in ["model_tiers", "agent_tier_map"]:
+            if key in merged:
+                getattr(cfg, key).update(merged[key])
+
+        valid_env_types = {"conda", "venv"}
+        if cfg.remote_env_type not in valid_env_types:
+            raise ValueError(
+                f"Invalid remote_env_type '{cfg.remote_env_type}', "
+                f"must be one of {valid_env_types}"
+            )
+
+        valid_languages = {"zh", "en"}
+        if cfg.language not in valid_languages:
+            raise ValueError(
+                f"Invalid language '{cfg.language}', "
+                f"must be one of {valid_languages}"
+            )
+
+        valid_writing_modes = {"sequential", "parallel", "codex"}
+        if cfg.writing_mode not in valid_writing_modes:
+            raise ValueError(
+                f"Invalid writing_mode '{cfg.writing_mode}', "
+                f"must be one of {valid_writing_modes}"
+            )
+        valid_experiment_modes = {"ssh_mcp", "server_codex", "server_claude"}
+        if cfg.experiment_mode not in valid_experiment_modes:
+            raise ValueError(
+                f"Invalid experiment_mode '{cfg.experiment_mode}', "
+                f"must be one of {valid_experiment_modes}"
+            )
+        return cfg
 
     def get_remote_env_cmd(self, project_name: str) -> str:
         """Return the environment activation command for remote execution."""
@@ -226,3 +318,115 @@ class Config:
     def to_yaml(self) -> str:
         """Serialize config as YAML for workspace/config.yaml snapshots."""
         return yaml.safe_dump(self.to_dict(), allow_unicode=True, sort_keys=False)
+
+    def to_commented_yaml(self) -> str:
+        """Serialize config as human-friendly YAML with section headers and comments."""
+        d = self.to_dict()
+
+        def _val(key: str) -> str:
+            v = d[key]
+            if isinstance(v, bool):
+                return "true" if v else "false"
+            if isinstance(v, str):
+                return f'"{v}"' if not v else str(v)
+            if isinstance(v, list):
+                return "[" + ", ".join(str(x) for x in v) + "]"
+            return str(v)
+
+        def _dict_block(key: str, indent: int = 2) -> str:
+            lines = []
+            prefix = " " * indent
+            for k, v in d[key].items():
+                lines.append(f"{prefix}{k}: {v}")
+            return "\n".join(lines)
+
+        return f"""\
+# Sibyl Research System — Project Configuration
+# Edit this file to customize project behavior.
+# Config priority: --config flag > project config.yaml > system config.yaml > defaults
+
+# ── Language ─────────────────────────────────────────────────────────
+# Agent output language ("zh" | "en"). Papers are always English.
+language: {_val('language')}
+
+# ── Remote Server ────────────────────────────────────────────────────
+ssh_server: {_val('ssh_server')}                       # SSH MCP connection name
+remote_base: {_val('remote_base')}    # [CHANGE ME] remote GPU server path
+remote_env_type: {_val('remote_env_type')}                    # "conda" | "venv"
+remote_conda_path: {_val('remote_conda_path')}                   # empty = auto
+remote_conda_env_name: {_val('remote_conda_env_name')}              # empty = auto: sibyl_{{project}}
+
+# ── GPU Scheduling ──────────────────────────────────────────────────
+max_gpus: {_val('max_gpus')}
+gpus_per_task: {_val('gpus_per_task')}
+
+# GPU polling (shared servers)
+gpu_poll_enabled: {_val('gpu_poll_enabled')}
+gpu_free_threshold_mb: {_val('gpu_free_threshold_mb')}             # VRAM threshold (MB)
+gpu_poll_interval_sec: {_val('gpu_poll_interval_sec')}              # poll interval (seconds)
+gpu_poll_max_attempts: {_val('gpu_poll_max_attempts')}                # 0 = infinite
+
+# Aggressive mode: claim GPUs with low utilization
+gpu_aggressive_mode: {_val('gpu_aggressive_mode')}
+gpu_aggressive_threshold_pct: {_val('gpu_aggressive_threshold_pct')}        # VRAM usage % threshold
+
+# ── Experiment Pipeline ─────────────────────────────────────────────
+idea_exp_cycles: {_val('idea_exp_cycles')}                     # idea→experiment cycles
+idea_validation_rounds: {_val('idea_validation_rounds')}            # pilot decision debate rounds
+max_iterations: {_val('max_iterations')}                     # soft iteration limit
+max_iterations_cap: {_val('max_iterations_cap')}                 # hard cap
+experiment_timeout: {_val('experiment_timeout')}                 # per-experiment timeout (seconds)
+iteration_dirs: {_val('iteration_dirs')}                 # true = iter_001/ subdirectories
+
+# ── Pilot Experiments ───────────────────────────────────────────────
+# Use 100+ samples for reliable signal (n=16 causes signal reversal)
+pilot_samples: {_val('pilot_samples')}
+pilot_timeout: {_val('pilot_timeout')}                      # seconds
+pilot_seeds: {_val('pilot_seeds')}
+
+# ── Full Experiments ────────────────────────────────────────────────
+full_seeds: {_val('full_seeds')}
+
+# ── Experiment Execution ────────────────────────────────────────────
+experiment_mode: {_val('experiment_mode')}              # "ssh_mcp" | "server_codex" | "server_claude"
+server_codex_path: {_val('server_codex_path')}                # Codex CLI path on server
+server_claude_path: {_val('server_claude_path')}              # Claude CLI path on server
+
+# ── Multi-Agent Debate ──────────────────────────────────────────────
+debate_rounds: {_val('debate_rounds')}
+writing_revision_rounds: {_val('writing_revision_rounds')}
+max_parallel_tasks: {_val('max_parallel_tasks')}
+
+# ── Writing ─────────────────────────────────────────────────────────
+# "sequential" (best coherence) | "parallel" (faster) | "codex" (gpt-5.4)
+writing_mode: {_val('writing_mode')}
+review_enabled: {_val('review_enabled')}
+
+# ── Codex Integration ───────────────────────────────────────────────
+codex_enabled: {_val('codex_enabled')}
+codex_model: {_val('codex_model')}                         # empty = Codex default
+codex_writing_model: {_val('codex_writing_model')}                 # empty = Codex default
+
+# ── Integrations ────────────────────────────────────────────────────
+lark_enabled: {_val('lark_enabled')}                     # Feishu/Lark doc sync
+evolution_enabled: {_val('evolution_enabled')}                # auto prompt evolution
+self_heal_enabled: {_val('self_heal_enabled')}                # auto error fix
+self_heal_interval_sec: {_val('self_heal_interval_sec')}             # scan interval (seconds)
+self_heal_max_attempts: {_val('self_heal_max_attempts')}               # circuit breaker threshold
+
+# ── Orchestra External Skills ──────────────────────────────────────
+# Inject external skill index into agent prompts for on-demand invocation
+orchestra_skills_enabled: {_val('orchestra_skills_enabled')}
+orchestra_skills_dir: {_val('orchestra_skills_dir')}
+orchestra_skills_max: {_val('orchestra_skills_max')}                 # max skills per agent prompt
+
+# ── Model Routing ───────────────────────────────────────────────────
+model_tiers:
+{_dict_block('model_tiers')}
+
+agent_tier_map:
+{_dict_block('agent_tier_map')}
+
+# ── Workspace root (parent directory that contains all projects) ────
+workspaces_dir: {_val('workspaces_dir')}
+"""
