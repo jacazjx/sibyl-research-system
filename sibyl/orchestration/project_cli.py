@@ -13,6 +13,7 @@ from sibyl.workspace import Workspace
 
 from .common_utils import slugify_project_name
 from .config_helpers import load_effective_config, write_project_config
+from .migration_cli import ensure_workspace_iteration_dirs
 from .workspace_paths import load_workspace_iteration_dirs, resolve_workspace_root
 
 
@@ -105,7 +106,7 @@ def _build_post_init_guide(
     lines.append("     - pilot_samples: 100      # pilot 样本数（建议 100+）")
     lines.append(f"     - max_gpus: {config.max_gpus}              # 最大 GPU 数")
     lines.append(f"     - writing_mode: {config.writing_mode}      # sequential | parallel | codex")
-    lines.append(f"     - iteration_dirs: {'true' if config.iteration_dirs else 'false'}       # 长期项目建议开启")
+    lines.append(f"     - iteration_dirs: {'true' if config.iteration_dirs else 'false'}       # 默认开启，建议保持 true")
     lines.append("")
     step += 1
 
@@ -142,6 +143,9 @@ def cli_list_projects(workspaces_dir: str | None = None) -> None:
         if not path.is_dir() or not (path / "status.json").exists():
             continue
         try:
+            if (path / "config.yaml").exists():
+                cfg = load_effective_config(workspace_path=path)
+                ensure_workspace_iteration_dirs(path, preferred_enabled=cfg.iteration_dirs)
             ws = Workspace.open_existing(ws_dir, path.name)
             meta = ws.get_project_metadata()
             meta["topic"] = ws.read_file("topic.txt") or ""
@@ -245,6 +249,10 @@ def cli_init_from_spec(
         config = load_effective_config(
             workspace_path=existing_workspace_root,
             config_path=config_path,
+        )
+        ensure_workspace_iteration_dirs(
+            existing_workspace_root,
+            preferred_enabled=config.iteration_dirs,
         )
         iteration_dirs = load_workspace_iteration_dirs(
             existing_workspace_root,

@@ -185,7 +185,7 @@ max_iterations_cap: 200
         assert c.remote_env_type == "conda"
         assert c.remote_conda_path == ""
         assert c.remote_conda_env_name == ""
-        assert c.iteration_dirs is False
+        assert c.iteration_dirs is True
         assert c.idea_validation_rounds == 4
         assert c.max_iterations == 10
         assert c.max_iterations_cap == 100

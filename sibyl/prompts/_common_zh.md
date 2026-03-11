@@ -115,7 +115,7 @@
 - `shared/` 目录存放跨迭代共用文件（literature.md, references.json, experiment_db.jsonl）
 - 禁止修改历史迭代目录（`iter_001/` 等）的文件
 - 日志文件（research_diary.md）在项目级 `logs/` 下增量追加，不随迭代清理
-- 当 `iteration_dirs=False` 时（默认），保持现有行为，无 iter 子目录
+- 当 `iteration_dirs=False` 时，系统仅为兼容旧项目而保持平铺目录模式
 
 ## 系统自进化安全规范 (CRITICAL)
 

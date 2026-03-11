@@ -33,6 +33,10 @@ def make_orchestrator(tmp_path):
         # Tests that specifically test lark behavior should pass lark_enabled=True.
         if "lark_enabled" not in config_overrides:
             config.lark_enabled = False
+        # Most orchestrator tests exercise flat workspaces unless they
+        # explicitly opt into iteration-dir mode.
+        if "iteration_dirs" not in config_overrides:
+            config.iteration_dirs = False
         for k, v in config_overrides.items():
             setattr(config, k, v)
 

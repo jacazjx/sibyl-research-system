@@ -116,7 +116,7 @@ All research outputs are stored in the shared workspace directory. Use Read and 
 - `shared/` directory stores cross-iteration shared files (literature.md, references.json, experiment_db.jsonl)
 - Do not modify files in historical iteration directories (`iter_001/`, etc.)
 - Log files (research_diary.md) are appended incrementally under project-level `logs/`, not cleared between iterations
-- When `iteration_dirs=False` (default), existing behavior is preserved with no iter subdirectories
+- When `iteration_dirs=False`, Sibyl stays in legacy flat-workspace mode for backward compatibility only
 
 ## Self-Evolution Safety (CRITICAL)
 

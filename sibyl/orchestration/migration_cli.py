@@ -17,6 +17,19 @@ from .config_helpers import load_effective_config, write_project_config
 from .constants import RUNTIME_GITIGNORE_LINES
 from .workspace_paths import resolve_workspace_root
 
+_ITERATION_SCOPED_TOP_LEVELS = (
+    "environment",
+    "idea",
+    "plan",
+    "exp",
+    "writing",
+    "context",
+    "codex",
+    "supervisor",
+    "critic",
+    "reflection",
+)
+
 
 def infer_topic_for_workspace(ws: Workspace) -> str:
     """Infer a reasonable topic when legacy workspaces are missing topic.txt."""
@@ -58,6 +71,117 @@ def detect_workspace_iteration_dirs(
         child.is_dir() and re.fullmatch(r"iter_\d{3}", child.name)
         for child in workspace_root.iterdir()
     ) or default
+
+
+def _target_iteration_dir(workspace_root: Path, raw_status: dict) -> Path:
+    iteration = int(raw_status.get("iteration", 0) or 0)
+    iteration = iteration if iteration > 0 else 1
+    return workspace_root / f"iter_{iteration:03d}"
+
+
+def _remove_placeholder_tree(path: Path) -> None:
+    """Remove an empty scaffold tree created for iteration mode."""
+    if not path.exists() or not path.is_dir():
+        return
+    for child in path.rglob("*"):
+        if child.is_file() or child.is_symlink():
+            return
+    shutil.rmtree(path)
+
+
+def _move_iteration_scoped_tree(src: Path, dst: Path) -> None:
+    """Move src into dst without overwriting divergent files."""
+    if not src.exists():
+        return
+
+    if src.is_file() or src.is_symlink():
+        if dst.exists():
+            if dst.is_file() and dst.read_bytes() == src.read_bytes():
+                src.unlink()
+                return
+            raise RuntimeError(f"Cannot migrate {src.name}: destination already exists at {dst}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return
+
+    _remove_placeholder_tree(dst)
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return
+
+    if not dst.is_dir():
+        raise RuntimeError(f"Cannot migrate directory {src} onto non-directory {dst}")
+
+    for child in list(src.iterdir()):
+        _move_iteration_scoped_tree(child, dst / child.name)
+    src.rmdir()
+
+
+def ensure_workspace_iteration_dirs(
+    workspace_path: str | Path,
+    *,
+    preferred_enabled: bool,
+    require_project_config: bool = True,
+) -> dict:
+    """Promote a flat workspace into iteration-dir mode when configured.
+
+    This is intentionally conservative: we only auto-migrate when the caller
+    prefers iteration dirs and the workspace already has a project config
+    snapshot (unless require_project_config=False).
+    """
+    ws_path = resolve_workspace_root(workspace_path)
+    result = {
+        "changed": False,
+        "workspace_path": str(ws_path),
+        "changes": [],
+        "warnings": [],
+    }
+    status_path = ws_path / "status.json"
+    if not ws_path.exists() or not status_path.exists():
+        return result
+    if not preferred_enabled:
+        return result
+    if require_project_config and not (ws_path / "config.yaml").exists():
+        return result
+
+    try:
+        raw_status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return result
+
+    status = Workspace.open_existing(ws_path.parent, ws_path.name).get_status()
+    current_link = ws_path / "current"
+    if status.iteration_dirs:
+        if not current_link.exists():
+            Workspace(ws_path.parent, ws_path.name, iteration_dirs=True)
+            result["changed"] = True
+            result["changes"].append("Recreated missing current/ symlink for iteration-dir workspace")
+        return result
+
+    # Bootstrap iteration scaffold first; status still remains false until move completes.
+    Workspace(ws_path.parent, ws_path.name, iteration_dirs=True)
+    target_iter = current_link.resolve() if current_link.exists() else _target_iteration_dir(ws_path, raw_status)
+
+    try:
+        for top_level in _ITERATION_SCOPED_TOP_LEVELS:
+            src = ws_path / top_level
+            if not src.exists():
+                continue
+            dst = target_iter / top_level
+            _move_iteration_scoped_tree(src, dst)
+            result["changes"].append(f"Moved {top_level}/ into {target_iter.name}/")
+    except Exception as exc:
+        result["warnings"].append(str(exc))
+        return result
+
+    status.iteration_dirs = True
+    tmp = status_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(asdict(status), indent=2), encoding="utf-8")
+    tmp.replace(status_path)
+    result["changed"] = True
+    result["changes"].append("Enabled iteration_dirs in status.json")
+    return result
 
 
 def strip_leading_title(markdown: str) -> str:
@@ -257,6 +381,13 @@ def migrate_workspace(
     if not ws_path.exists():
         return {"error": f"Workspace not found: {workspace_path}"}
 
+    default_cfg = load_effective_config(workspace_path=ws_path)
+    auto_iter = ensure_workspace_iteration_dirs(
+        ws_path,
+        preferred_enabled=default_cfg.iteration_dirs,
+        require_project_config=False,
+    )
+
     raw_status: dict = {}
     status_path = ws_path / "status.json"
     if status_path.exists():
@@ -264,7 +395,6 @@ def migrate_workspace(
             raw_status = json.loads(status_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             raw_status = {}
-    default_cfg = load_effective_config(workspace_path=ws_path)
     iteration_dirs = detect_workspace_iteration_dirs(
         ws_path,
         raw_status,
@@ -286,8 +416,8 @@ def migrate_workspace(
     )
 
     ws = Workspace(ws_path.parent, ws_path.name, iteration_dirs=iteration_dirs)
-    changes: list[str] = []
-    warnings: list[str] = []
+    changes: list[str] = list(auto_iter["changes"])
+    warnings: list[str] = list(auto_iter["warnings"])
 
     if not (ws.root / "topic.txt").exists():
         topic = infer_topic_for_workspace(ws)

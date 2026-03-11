@@ -84,7 +84,7 @@ class Config:
     remote_env_type: str = "conda"       # "conda" | "venv"
     remote_conda_path: str = ""          # empty = auto {remote_base}/miniconda3/bin/conda
     remote_conda_env_name: str = ""      # empty = auto sibyl_<project>; set to reuse an existing env
-    iteration_dirs: bool = False         # True = iteration subdirectory mode
+    iteration_dirs: bool = True          # True = iteration subdirectory mode (default)
 
     # Lark sync
     lark_enabled: bool = True
@@ -376,7 +376,7 @@ idea_validation_rounds: {_val('idea_validation_rounds')}            # pilot deci
 max_iterations: {_val('max_iterations')}                     # soft iteration limit
 max_iterations_cap: {_val('max_iterations_cap')}                 # hard cap
 experiment_timeout: {_val('experiment_timeout')}                 # per-experiment timeout (seconds)
-iteration_dirs: {_val('iteration_dirs')}                 # true = iter_001/ subdirectories
+iteration_dirs: {_val('iteration_dirs')}                 # default: true (current -> iter_001/ subdirectories)
 
 # ── Pilot Experiments ───────────────────────────────────────────────
 # Use 100+ samples for reliable signal (n=16 causes signal reversal)
