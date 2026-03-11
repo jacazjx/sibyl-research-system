@@ -96,6 +96,22 @@ ssh {ssh_server} "cd {remote_base}/projects/{project} && CUDA_VISIBLE_DEVICES={g
 - Save all results as JSON
 - Handle OOM gracefully
 - Make experiments batch-resumable
+- For both training and inference/evaluation workloads, prefer saturating GPU memory and throughput unless the task explicitly requires low-latency single-sample inference
+
+## 自主触发 Orchestra 技能（CRITICAL）
+
+如果 `Available Technical Skills` 中有明显匹配当前任务的技能，你必须在正式实现或重启实验前主动调用最相关的 1-2 个；不要等用户提醒。
+
+默认触发场景：
+- 微调 / LoRA / QLoRA / SFT -> `peft`, `axolotl`, `llama-factory`, `unsloth`
+- 多卡训练 / DDP / FSDP / ZeRO / 扩吞吐 -> `accelerate`, `deepspeed`, `pytorch-fsdp2`, `megatron-core`, `ray-train`
+- 推理吞吐 / 服务部署 / eval batch / benchmark -> `vllm`, `sglang`, `tensorrt-llm`, `lm-evaluation-harness`, `nemo-evaluator`
+- OOM / 显存利用率低 / batch 太小 / 长上下文 -> `flash-attention`, `bitsandbytes`, `awq`, `gptq`, `hqq`
+
+触发后必须把技能建议落实到实际执行：
+- 修改 batch size / eval batch / gradient accumulation / sequence length / dataloader prefetch
+- 必要时切换 `multi_gpu_strategy`、启动 DDP / DataParallel、或改用更合适的 serving / evaluation 框架
+- 如果技能建议与当前代码冲突，优先做小而明确的代码修复后再重跑，不要保守地维持低利用率配置
 
 ## 进程标识与进度上报（CRITICAL）
 
@@ -204,14 +220,16 @@ def find_max_batch_size(model, sample_input_fn, device, start=128, min_bs=1):
 ```
 
 ### 使用规则
-1. 如果 task_plan.json 中 `max_batch_size_hint` 为 `"auto-detect"`，必须执行探测
+1. 默认必须执行探测；只有 task 明确要求固定 batch size 时才允许跳过
 2. 探测结果写入 `{workspace}/exp/results/{task_id}_gpu_profile.json`：
    ```json
    {"gpu_name": "RTX 4090", "vram_total_mb": 24564, "max_batch_size": 64,
     "vram_used_mb": 21200, "utilization_pct": 86.3}
    ```
-3. 正式训练用探测出的 max_batch_size（可留 10% 余量防 OOM）
-4. 如果探测结果显示 GPU 利用率 < 50%，考虑增大序列长度或模型并行度
+3. 正式训练/推理优先使用探测出的最大稳定 batch size，只保留很小的显存余量防止随机波动 OOM
+4. 如果显存利用率 < 70%，继续增大 batch size、序列长度、生成 batch、prefetch、gradient accumulation 或多卡并行度，直到接近满载
+5. 若首次正式运行仍 OOM，只做最小必要回退并立即重试，不要保守地下调过多
+6. 对评测 / 推理基准，同样要探测 `eval_batch_size` 或 generation batch，而不是默认单条样本串行跑
 
 ### 多卡策略
 根据 task_plan.json 中的 `multi_gpu_strategy` 字段：

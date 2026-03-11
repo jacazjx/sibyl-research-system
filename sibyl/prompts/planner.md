@@ -44,6 +44,21 @@ When setting `estimated_minutes` in task_plan.json, flag any task exceeding 60 m
 - Do NOT plan for multi-seed cross-validation or statistical significance testing
 - Focus on: benchmark performance, ablation results, baseline comparisons
 
+## 自主触发 Orchestra 技能（CRITICAL）
+
+如果下方的 `Available Technical Skills` 中存在明显匹配当前任务的 Orchestra 技能，你必须**主动**调用最相关的 1-2 个，再定稿 methodology 和 task_plan.json；不要等用户提醒，也不要只把技能列表当成参考摆设。
+
+优先触发规则：
+- LoRA / QLoRA / SFT / 微调规划 -> `peft`, `axolotl`, `llama-factory`, `unsloth`
+- 多卡 / DDP / FSDP / DeepSpeed / 大模型训练 -> `accelerate`, `deepspeed`, `pytorch-fsdp2`, `megatron-core`, `ray-train`
+- benchmark / 评测 / pilot 筛选 / 测试方案 -> `lm-evaluation-harness`, `nemo-evaluator`, `bigcode-evaluation-harness`（仅代码模型任务）
+- OOM / 显存 / batch size / 长序列 / 吞吐优化 -> `flash-attention`, `bitsandbytes`, `awq`, `gptq`, `hqq`
+
+调用后要把学到的具体约束落实进计划，而不是停留在口头上：
+- 反映到 `gpu_count`、`multi_gpu_strategy`、`max_batch_size_hint`
+- 反映到 pilot / full 的评测基准、吞吐目标、OOM 回退策略
+- 反映到 `estimated_minutes`、风险项、共享资源和依赖拆分
+
 ## GPU 资源规划（必须自主决定）
 
 你必须为每个 task 独立分析并决定 GPU 分配策略，不要一律填 `gpu_count: 1`。
@@ -66,7 +81,8 @@ When setting `estimated_minutes` in task_plan.json, flag any task exceeding 60 m
 ```
 
 - `multi_gpu_strategy`: 建议的多卡策略（experimenter 参考执行）
-- `max_batch_size_hint`: 设为 `"auto-detect"` 表示实验前先做显存探测自动确定最大 batch size
+- `max_batch_size_hint`: 默认设为 `"auto-detect"`，要求 experimenter 在训练/推理前先做显存探测
+- 除非任务有明确低延迟约束，否则默认按“尽量吃满显存、提高吞吐”的策略设计 batch / eval_batch / gradient accumulation
 
 ## 迭代与共享资源
 

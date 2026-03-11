@@ -52,6 +52,19 @@ def tmp_skills(tmp_path: Path) -> Path:
         Evaluate models.
     """))
 
+    # Category 4: distributed training
+    dist_dir = tmp_path / "08-distributed-training" / "deepspeed"
+    dist_dir.mkdir(parents=True)
+    (dist_dir / "SKILL.md").write_text(dedent("""\
+        ---
+        name: deepspeed
+        description: Distributed training with ZeRO, pipeline parallelism, and mixed precision for large-scale training.
+        tags: [Distributed Training, DeepSpeed, ZeRO, DDP]
+        ---
+        # DeepSpeed
+        Scale training.
+    """))
+
     # Category-level skill (no subdirectory)
     paper_dir = tmp_path / "20-ml-paper-writing"
     paper_dir.mkdir(parents=True)
@@ -80,9 +93,10 @@ class TestSkillRegistryScanning:
         assert "peft-fine-tuning" in names
         assert "vllm-serving" in names
         assert "lm-evaluation-harness" in names
+        assert "deepspeed" in names
         assert "ml-paper-writing" in names
         # Malformed skill should be skipped
-        assert len(entries) == 4
+        assert len(entries) == 5
 
     def test_scan_empty_dir(self, tmp_path: Path) -> None:
         reg = SkillRegistry(skills_dir=tmp_path)
@@ -114,7 +128,7 @@ class TestFiltering:
     def test_no_topic_returns_all_up_to_max(self, tmp_skills: Path) -> None:
         reg = SkillRegistry(skills_dir=tmp_skills)
         result = reg.filter_skills(max_results=10)
-        assert len(result) == 4
+        assert len(result) == 5
 
     def test_max_results_limits_output(self, tmp_skills: Path) -> None:
         reg = SkillRegistry(skills_dir=tmp_skills)
@@ -130,6 +144,25 @@ class TestFiltering:
         reg = SkillRegistry(skills_dir=tmp_skills)
         result = reg.filter_skills(topic="vLLM inference serving deployment")
         assert result[0].invoke_name == "vllm"
+
+    def test_topic_scoring_supports_chinese_semantics(self, tmp_skills: Path) -> None:
+        reg = SkillRegistry(skills_dir=tmp_skills)
+        result = reg.filter_skills(topic="中文大模型训练与推理实验")
+        top_three = {entry.invoke_name for entry in result[:3]}
+        assert "vllm" in top_three
+        assert {"peft", "deepspeed"} & top_three
+
+    def test_topic_scoring_understands_stage_semantics(self, tmp_skills: Path) -> None:
+        reg = SkillRegistry(skills_dir=tmp_skills)
+        result = reg.filter_skills(topic="全量训练阶段，需要多卡分布式训练")
+        assert result[0].invoke_name == "deepspeed"
+
+    def test_topic_scoring_understands_pilot_eval_semantics(self, tmp_skills: Path) -> None:
+        reg = SkillRegistry(skills_dir=tmp_skills)
+        result = reg.filter_skills(topic="pilot 预实验阶段，先做小规模评测和推理吞吐验证")
+        top_four = {entry.invoke_name for entry in result[:4]}
+        assert "vllm" in top_four
+        assert "lm-evaluation-harness" in top_four
 
 
 class TestTopicScoring:
@@ -164,6 +197,7 @@ class TestRendering:
         assert "peft" in output
         assert "vllm" in output
         assert "Skill tool" in output
+        assert "不要等用户提醒" in output
 
     def test_render_index_empty_registry(self, tmp_path: Path) -> None:
         reg = SkillRegistry(skills_dir=tmp_path)
