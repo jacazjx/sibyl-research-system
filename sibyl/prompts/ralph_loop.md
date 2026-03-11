@@ -6,7 +6,7 @@
 恢复上下文:
 1. 读取 {workspace_path}/breadcrumb.json 了解当前 stage 和循环状态
 2. 获取编排循环定义:
-   .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt; print(load_prompt('orchestration_loop'))"
+   .venv/bin/python3 -c "from sibyl.orchestrate import render_control_plane_prompt; print(render_control_plane_prompt('loop', workspace_path='{workspace_path}'))"
 3. 读取 {workspace_path}/logs/research_diary.md 了解历史
 
 执行循环:

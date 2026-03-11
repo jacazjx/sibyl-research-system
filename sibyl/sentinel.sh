@@ -35,6 +35,8 @@ HEARTBEAT_FILE="$WORKSPACE/sentinel_heartbeat.json"
 SESSION_FILE="$WORKSPACE/sentinel_session.json"
 STOP_FILE="$WORKSPACE/sentinel_stop.json"
 STALE_THRESHOLD=300  # 5 minutes
+SENTINEL_CONFIG='{}'
+PROJECT_NAME="$(basename "$WORKSPACE")"
 
 # Consecutive wake attempts before backing off
 MAX_WAKE_ATTEMPTS=3
@@ -80,22 +82,31 @@ claude_has_active_children() {
 
 # ─── State checks (pure file reads, no LLM) ──────────────────
 
-# Check if experiments are active or project has ongoing work
-experiments_active() {
-    local config_output
-    config_output=$("$PYTHON" -c "
+read_sentinel_config() {
+    SIBYL_WORKSPACE="$WORKSPACE" "$PYTHON" - <<'PY'
+import os
 from sibyl.orchestrate import cli_sentinel_config
-cli_sentinel_config('$WORKSPACE')
-" 2>/dev/null) || return 1
 
-    local should_keep_running
-    should_keep_running=$(echo "$config_output" | jq -r '.should_keep_running')
+cli_sentinel_config(os.environ["SIBYL_WORKSPACE"])
+PY
+}
 
-    if [[ "$should_keep_running" == "true" ]]; then
-        return 0
+refresh_sentinel_config() {
+    local config_output
+    config_output=$(read_sentinel_config 2>/dev/null) || return 1
+    if ! echo "$config_output" | jq -e . >/dev/null 2>&1; then
+        return 1
     fi
-
-    return 1
+    SENTINEL_CONFIG="$config_output"
+    PROJECT_NAME=$(echo "$SENTINEL_CONFIG" | jq -r '.project_name // ""' 2>/dev/null)
+    if [[ -z "$PROJECT_NAME" || "$PROJECT_NAME" == "null" ]]; then
+        PROJECT_NAME="$(basename "$WORKSPACE")"
+    fi
+    CONTINUE_TARGET=$(echo "$SENTINEL_CONFIG" | jq -r '.workspace_path // ""' 2>/dev/null)
+    if [[ -z "$CONTINUE_TARGET" || "$CONTINUE_TARGET" == "null" ]]; then
+        CONTINUE_TARGET="$WORKSPACE"
+    fi
+    return 0
 }
 
 # Check if heartbeat is stale (older than STALE_THRESHOLD seconds)
@@ -113,6 +124,12 @@ heartbeat_stale() {
 
 # Get saved session ID for --resume
 get_session_id() {
+    local session_id=""
+    session_id=$(echo "$SENTINEL_CONFIG" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+    if [[ -n "$session_id" ]]; then
+        echo "$session_id"
+        return
+    fi
     if [[ -f "$SESSION_FILE" ]]; then
         jq -r '.session_id // ""' "$SESSION_FILE" 2>/dev/null || echo ""
     else
@@ -149,10 +166,8 @@ restart_claude() {
         log "  Claude started. Waiting 15s for initialization..."
         sleep 15
         # Inject resume command
-        local project_name
-        project_name=$(basename "$WORKSPACE")
-        tmux send-keys -t "$TMUX_PANE" "/sibyl-research:continue $project_name" Enter
-        log "  Injected /sibyl-research:continue $project_name"
+        tmux send-keys -t "$TMUX_PANE" "/sibyl-research:continue $CONTINUE_TARGET" Enter
+        log "  Injected /sibyl-research:continue $PROJECT_NAME"
         wake_attempts=0
     else
         log "  ERROR: Claude failed to start after 90s"
@@ -163,10 +178,8 @@ restart_claude() {
 # Wake up an idle Claude session (Case B: process alive but stale heartbeat)
 wake_claude() {
     log "WAKE: Heartbeat stale, nudging Claude..."
-    local project_name
-    project_name=$(basename "$WORKSPACE")
-    tmux send-keys -t "$TMUX_PANE" "/sibyl-research:continue $project_name" Enter
-    log "  Injected /sibyl-research:continue $project_name"
+    tmux send-keys -t "$TMUX_PANE" "/sibyl-research:continue $CONTINUE_TARGET" Enter
+    log "  Injected /sibyl-research:continue $PROJECT_NAME"
     wake_attempts=$((wake_attempts + 1))
 }
 
@@ -191,8 +204,20 @@ while true; do
         exit 0
     fi
 
+    if ! refresh_sentinel_config; then
+        log "warning - failed to read sentinel config"
+        sleep "$POLL_INTERVAL"
+        continue
+    fi
+
+    if [[ "$(echo "$SENTINEL_CONFIG" | jq -r '.watchdog_allowed // false')" != "true" ]]; then
+        log "ownership conflict detected; watchdog exiting for safety"
+        log "  Conflicts: $(echo "$SENTINEL_CONFIG" | jq -c '.conflicts // []')"
+        exit 0
+    fi
+
     # ── Check if project is active ──
-    if ! experiments_active; then
+    if [[ "$(echo "$SENTINEL_CONFIG" | jq -r '.should_keep_running // false')" != "true" ]]; then
         log "idle - no active work"
         wake_attempts=0
         sleep "$POLL_INTERVAL"
@@ -201,7 +226,7 @@ while true; do
 
     # ── Back-off: too many consecutive wake attempts ──
     if [[ $wake_attempts -ge $MAX_WAKE_ATTEMPTS ]]; then
-        local backoff=$((POLL_INTERVAL * 3))
+        backoff=$((POLL_INTERVAL * 3))
         log "BACKOFF: $wake_attempts consecutive attempts failed, sleeping ${backoff}s"
         sleep "$backoff"
         wake_attempts=0

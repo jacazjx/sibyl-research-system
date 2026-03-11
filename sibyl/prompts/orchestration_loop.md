@@ -1,7 +1,8 @@
 # 编排循环（共享参考文档）
 
 本文档是 start.md、resume.md、continue.md 共用的编排循环定义。
-**不要直接调用此文档**，它由上述命令内部引用。
+**不要直接调用此文档**。运行时 control-plane prompt 由
+`render_control_plane_prompt('loop', workspace_path=...)` 动态编译；本文档仅作为人类参考说明保留。
 
 ## CLI API 参考（重要：只使用以下函数，不要猜测其他函数名）
 
@@ -222,14 +223,15 @@ LOOP:
         - 追加一条记录到 WORKSPACE_PATH/logs/research_diary.md
         - 格式: ## [STAGE] YYYY-MM-DD HH:MM\n<汇总内容>\n
 
-     c. 飞书后台同步（非阻塞）:
-        - 检查 cli_record 的返回 JSON；如果 `sync_requested == true`：
-          1. 立即启动 `sibyl-lark-sync`，参数为 `WORKSPACE_PATH`
-          2. 使用 Agent / Skill 的后台模式（run_in_background），**不要等待完成**
-          3. 继续主循环，飞书同步失败也不能阻塞研究流程
-        - 触发日志保存在 `WORKSPACE_PATH/lark_sync/pending_sync.jsonl`
-        - 同步结果查看 `WORKSPACE_PATH/lark_sync/sync_status.json`
-        - 如需手动触发：`/sibyl-research:sync {project}`
+     c. 飞书后台同步（Hook 自动触发，无需手动处理）:
+        - **已由 PostToolUse hook 自动处理**: `.claude/hooks/lark-sync-trigger.sh`
+          监听 cli_record 的 Bash 调用，检测 `sync_requested: true` 后注入上下文
+        - 当你看到 `[LARK-SYNC-HOOK]` 上下文提示时，按提示启动后台 Agent:
+          使用 Agent tool（run_in_background=true）调用 Skill `sibyl-lark-sync`，参数为 WORKSPACE_PATH
+        - **不要等待完成**，继续主循环。飞书同步失败不能阻塞研究流程
+        - 触发日志: `WORKSPACE_PATH/lark_sync/pending_sync.jsonl`
+        - 同步结果: `WORKSPACE_PATH/lark_sync/sync_status.json`
+        - 手动触发: `/sibyl-research:sync {project}`
 
      d. 压缩上下文:
         - 执行 /compact 压缩当前会话上下文

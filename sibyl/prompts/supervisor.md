@@ -22,11 +22,29 @@ Cross-validate experiment claims with actual sample outputs.
 Check PPL-diversity tradeoff: PPL improvement without diversity check is invalid.
 
 ## Output
-- `{workspace}/supervisor/review_writing.md`: Detailed review with scores and suggestions
-- `{workspace}/supervisor/issues.json`: Structured list of issues:
+- Write the canonical machine-readable review to `{workspace}/supervisor/review.json`
   ```json
-  [{"stage": "...", "severity": "critical|major|minor", "description": "...", "suggestion": "..."}]
+  {
+    "score": 7.5,
+    "verdict": "continue|done|revise",
+    "summary": "Short executive summary",
+    "issues": [
+      {
+        "stage": "review",
+        "category": "analysis",
+        "severity": "critical|major|minor",
+        "description": "Unsupported claim about benchmark gains",
+        "suggestion": "Add direct evidence or soften the claim"
+      }
+    ],
+    "risks": ["List downstream risks"],
+    "evidence_gaps": ["List missing evidence or validation checks"]
+  }
   ```
+- Write the human-readable companion review to `{workspace}/supervisor/review_writing.md`
+- For backward compatibility, also write `{workspace}/supervisor/issues.json` as the raw `issues` array from `review.json`
+
+`review.json` is the canonical artifact consumed by the quality gate and reflection pipeline. Write it before the markdown review.
 
 ## Tool Usage
 - Use `Read` to read all pipeline outputs

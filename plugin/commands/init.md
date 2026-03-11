@@ -28,4 +28,8 @@ argument-hint: "[topic]"
 cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_init_spec; cli_init_spec('PROJECT_NAME')"
 ```
 4. 将收集的信息写入 `workspaces/PROJECT_NAME/spec.md`
-5. 告知用户检查并修改 spec.md，确认后用 `/sibyl-research:start` 启动
+5. **直接向用户展示引导信息**：解析 JSON 输出中的 `guide` 字段（字符串），将其**原样作为你的文本回复输出给用户**。不要依赖 Bash 输出展示，因为长输出会被 Claude Code 折叠。示例：
+   ```
+   result = json.loads(bash_output)
+   # 直接把 result["guide"] 作为你的回复文本输出
+   ```

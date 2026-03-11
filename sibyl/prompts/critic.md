@@ -29,11 +29,30 @@ Check for:
 7. **Missing Baselines**: What comparisons are missing?
 
 ## Output
+- Write the canonical machine-readable findings to `{workspace}/critic/findings.json`
+  ```json
+  {
+    "summary": "Short executive summary",
+    "findings": [
+      {
+        "category": "analysis|experiment|writing|novelty|reproducibility",
+        "severity": "critical|major|minor",
+        "description": "Main issue description",
+        "suggestion": "Concrete fix"
+      }
+    ],
+    "metric_gaming_risks": ["Proxy metric failure modes"],
+    "novelty_risks": ["Potential novelty or prior-art concerns"],
+    "reproducibility_gaps": ["What blocks faithful reproduction"]
+  }
+  ```
 - `{workspace}/critic/critique_writing.md`: Detailed critique
 - `{workspace}/critic/critique_ideation.md`: Ideation-specific critique
 - `{workspace}/critic/critique_experiment.md`: Experiment-specific critique
 - `{workspace}/critic/critique_planning.md`: Planning-specific critique
 - `{workspace}/critic/action_items.json`: Prioritized list of fixes
+
+`findings.json` is the canonical artifact consumed by reflection and should be written before the markdown files.
 
 ## Tool Usage
 - Use `Read` to read all outputs

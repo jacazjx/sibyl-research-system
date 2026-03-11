@@ -87,12 +87,12 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_next; 
 
 5. **执行该 action**：
 
-   动态加载编排循环定义获取 action dispatch 规则：
+   动态渲染编排循环定义获取 action dispatch 规则：
    ```bash
-   cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import load_prompt; print(load_prompt('orchestration_loop'))"
+   cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import render_control_plane_prompt; print(render_control_plane_prompt('loop', workspace_path='workspaces/PROJECT'))"
    ```
 
-   按编排循环定义中对应 action_type 的规则执行该 action。
+   按渲染出来的 control-plane protocol 中对应 action_type 的规则执行该 action。
    如果检测到遗留 `paused_at` / 手动 stop 标记，先自动 resume，再重新获取 action。
 
 5. **记录结果**：
@@ -114,7 +114,7 @@ cd $SIBYL_ROOT && .venv/bin/python3 -c "from sibyl.orchestrate import cli_record
    b. **更新研究日志**：追加一条记录到 WORKSPACE_PATH/logs/research_diary.md
       格式: ## [STAGE] YYYY-MM-DD HH:MM\n<汇总内容>\n
 
-   c. **飞书后台同步**：如果 `cli_record` 返回 `sync_requested: true`，后台启动 `sibyl-lark-sync workspaces/PROJECT`，不要等待它完成，也不要让它阻塞 debug 主流程。
+   c. **飞书后台同步**：由 PostToolUse hook 自动检测 `sync_requested: true`。看到 `[LARK-SYNC-HOOK]` 提示时，按提示启动后台 Agent，不要等待完成。
 
    注意：debug 模式**不执行 /compact**，因为每次执行一步就停下来，新 session 自然有新上下文。
 

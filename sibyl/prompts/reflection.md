@@ -8,16 +8,17 @@
 
 ## 输入文件
 读取以下文件（按优先级排序）：
-1. `{workspace}/supervisor/review_writing.md` — 监督审查（最重要）
-2. `{workspace}/supervisor/issues.json` — 结构化问题列表
-3. `{workspace}/critic/critique_writing.md` — 批评反馈
-4. `{workspace}/exp/results/summary.md` — 实验结果摘要
-5. `{workspace}/logs/research_diary.md` — 历史迭代记录
-6. `{workspace}/writing/review.md` — 论文终审
-7. `{workspace}/reflection/lessons_learned.md` — 上轮教训（跨迭代保留）
-8. `{workspace}/reflection/prev_action_plan.json` — 上轮问题清单（用于对比哪些问题已修复）
-9. `{workspace}/logs/quality_trend.md` — 质量分数趋势（跨迭代）
-10. `{workspace}/logs/self_check_diagnostics.json` — 系统自检结果（如存在，需重点关注）
+1. `{workspace}/supervisor/review.json` — 监督审查权威 JSON（最重要，机器可消费）
+2. `{workspace}/supervisor/review_writing.md` — 监督审查文字版（用于补充上下文）
+3. `{workspace}/critic/findings.json` — 批评结果权威 JSON
+4. `{workspace}/critic/critique_writing.md` — 批评反馈文字版
+5. `{workspace}/exp/results/summary.md` — 实验结果摘要
+6. `{workspace}/logs/research_diary.md` — 历史迭代记录
+7. `{workspace}/writing/review.md` — 论文终审
+8. `{workspace}/reflection/lessons_learned.md` — 上轮教训（跨迭代保留）
+9. `{workspace}/reflection/prev_action_plan.json` — 上轮问题清单（用于对比哪些问题已修复）
+10. `{workspace}/logs/quality_trend.md` — 质量分数趋势（跨迭代）
+11. `{workspace}/logs/self_check_diagnostics.json` — 系统自检结果（如存在，需重点关注）
 
 ## 任务
 
@@ -45,6 +46,8 @@
 
 ### 4. 改进计划
 为每个问题提供具体的、可操作的改进建议。
+
+优先信任结构化 JSON（`review.json` / `findings.json` / `action_plan.json`），不要从 markdown prose 中臆测字段值。
 
 ### 5. 资源效率分析
 分析本轮迭代中计算资源的利用情况，重点关注：
