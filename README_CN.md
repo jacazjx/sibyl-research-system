@@ -45,6 +45,12 @@ claude --plugin-dir ./plugin --dangerously-skip-permissions
 
 Claude 会自动检测你的环境、安装依赖、配置 MCP 服务器、创建配置文件，只在检测不到的信息（GPU 服务器 IP、用户名等）时询问你。[配置指南](docs/setup-guide.md)是一份专为 Claude 设计的分步检查清单。
 
+配置完成后，在 Claude Code 中运行初始化命令，验证安装并准备第一个 workspace：
+
+```
+/sibyl-research:init
+```
+
 ### 手动配置
 
 <details>
@@ -130,6 +136,9 @@ claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 cd "$SIBYL_ROOT/workspaces/my-project"
 tmux new -s sibyl-my-project
 claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# 在仓库根目录启动的 Claude Code 中 —— 安装完成后运行一次：
+/sibyl-research:init              # 验证安装并准备第一个 workspace
 
 # 在从 workspaces/my-project 启动的 Claude Code 中：
 /sibyl-research:start spec.md     # 用当前 workspace 的 spec 启动新项目

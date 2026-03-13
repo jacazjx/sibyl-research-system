@@ -46,6 +46,12 @@ Then tell Claude:
 
 Claude will automatically check your environment, install dependencies, configure MCP servers, create config files, and ask you only for what it can't detect (GPU server IP, username, etc.). The [setup guide](docs/setup-guide.md) is a step-by-step checklist designed for Claude to follow.
 
+Once setup is complete, run the init command inside Claude Code to verify the installation and prepare your first workspace:
+
+```
+/sibyl-research:init
+```
+
 ### Manual Setup
 
 <details>
@@ -132,6 +138,9 @@ claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 cd "$SIBYL_ROOT/workspaces/my-project"
 tmux new -s sibyl-my-project
 claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
+
+# Inside Claude Code (repo root) — run once after installation:
+/sibyl-research:init              # Verify installation and prepare first workspace
 
 # Inside Claude Code launched from workspaces/my-project:
 /sibyl-research:start spec.md     # New project from this workspace's spec
