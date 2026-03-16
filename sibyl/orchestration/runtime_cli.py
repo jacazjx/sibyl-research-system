@@ -165,7 +165,7 @@ def _build_experiment_status_payload(workspace_path: str) -> dict:
 
     monitor = read_monitor_result(str(monitor_path))
     result = dict(monitor) if monitor else {"status": "no_monitor"}
-    completed, running_ids, running_map, timings = _load_progress(active_root)
+    completed, running_ids, running_map, timings, _ = _load_progress(active_root)
     _ = timings
 
     task_plan_path = active_root / "plan" / "task_plan.json"
@@ -724,8 +724,10 @@ def cli_dispatch_tasks(
     for assignment in batch:
         for task_id in assignment["task_ids"]:
             task_gpu_map[task_id] = assignment["gpu_ids"]
-    remote_project_dir = f"{orchestrator.config.remote_base}/projects/{orchestrator.ws.name}"
-    register_dispatched_tasks(active_root, task_gpu_map, remote_project_dir)
+    from sibyl.compute import get_backend
+    backend = get_backend(orchestrator.config, str(active_root))
+    project_dir = backend.project_dir(orchestrator.ws.name)
+    register_dispatched_tasks(active_root, task_gpu_map, project_dir)
 
     skills = []
     for assignment in batch:
@@ -788,14 +790,20 @@ def cli_recover_experiments(
         return
 
     orchestrator = orchestrator_factory(workspace_path)
-    remote_project_dir = f"{orchestrator.config.remote_base}/projects/{orchestrator.ws.name}"
-    script = generate_detection_script(remote_project_dir, running)
+    from sibyl.compute import get_backend
+    backend = get_backend(orchestrator.config, str(resolve_active_workspace_path(workspace_path)))
+    project_dir = backend.project_dir(orchestrator.ws.name)
+    script = generate_detection_script(project_dir, running)
+    is_local = backend.backend_type == "local"
     print(json.dumps({
         "status": "has_running_tasks",
         "running_tasks": running,
         "detection_script": script,
-        "ssh_server": orchestrator.config.ssh_server,
+        "ssh_server": "" if is_local else orchestrator.config.ssh_server,
         "instructions": (
+            "Run the detection_script locally via Bash, "
+            "then pass the output to cli_apply_recovery."
+            if is_local else
             "Run the detection_script on the remote server via SSH, "
             "then pass the output to cli_apply_recovery."
         ),
@@ -823,3 +831,23 @@ def cli_apply_recovery(workspace_path: str, ssh_output: str) -> None:
     output = asdict(result)
     output["status"] = "recovered"
     print(json.dumps(output, indent=2))
+
+
+def cli_sync_experiment_completions(
+    workspace_path: str,
+    completed_json: str = "[]",
+    failed_json: str = "[]",
+) -> None:
+    """Sync daemon-detected task completions to experiment_state.json.
+
+    Lightweight CLI entry point for the bash monitor daemon. Accepts JSON
+    arrays of completed/failed task IDs and updates experiment_state.json
+    + gpu_progress.json in one shot.
+    """
+    from sibyl.experiment_recovery import mark_tasks_completed
+
+    active_root = resolve_active_workspace_path(workspace_path)
+    completed_ids = _parse_json_list(completed_json)
+    failed_ids = _parse_json_list(failed_json)
+    result = mark_tasks_completed(active_root, completed_ids, failed_ids)
+    print(json.dumps(result, indent=2))

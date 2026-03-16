@@ -12,6 +12,7 @@ from sibyl.gpu_scheduler import (
     experiment_monitor_script, read_monitor_result,
     claim_next_batch, get_running_gpu_ids, register_running_tasks,
     unregister_running_task,
+    _load_progress,
 )
 
 
@@ -1173,3 +1174,19 @@ class TestMonitorScriptDispatchNeeded:
         assert "dispatch_needed" in script
         assert "PREV_DONE_COUNT" in script
         assert "DISPATCH" in script
+
+
+# ══════════════════════════════════════════════
+# _load_progress failed set
+# ══════════════════════════════════════════════
+
+def test_load_progress_returns_failed(tmp_path):
+    """_load_progress should return failed task IDs."""
+    ws = tmp_path / "ws"
+    (ws / "exp").mkdir(parents=True)
+    progress = {"completed": ["a"], "failed": ["b"], "running": {}, "timings": {}}
+    (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+    completed, running_ids, running_map, timings, failed = _load_progress(ws)
+    assert "b" in failed
+    assert "a" in completed

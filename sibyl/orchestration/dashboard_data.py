@@ -29,7 +29,7 @@ def collect_dashboard_data(workspace_path: str | Path, events_tail: int = 50) ->
 
     experiment_progress = {}
     try:
-        completed, running_ids, running_map, timings = _load_progress(ws.active_root)
+        completed, running_ids, running_map, timings, _ = _load_progress(ws.active_root)
         experiment_progress["gpu_progress"] = {
             "completed": sorted(completed),
             "running": sorted(running_ids),

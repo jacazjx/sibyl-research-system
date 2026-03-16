@@ -10,8 +10,10 @@ from .common_utils import build_repo_python_cli_command, pack_skill_args
 from .workspace_paths import project_marker_file
 
 
-def _remote_project_dir(orchestrator: Any) -> str:
-    return f"{orchestrator.config.remote_base}/projects/{orchestrator.ws.name}"
+def _project_dir(orchestrator: Any) -> str:
+    from sibyl.compute import get_backend
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
+    return backend.project_dir(orchestrator.ws.name)
 
 
 def _default_wake_check_interval_sec(poll_interval_sec: int) -> int:
@@ -39,8 +41,11 @@ def build_experiment_skill_dict(
     task_ids: str = "",
 ) -> dict:
     """Build a single experimenter skill dict."""
+    from sibyl.compute import get_backend
+
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
     gpu_ids_str = ",".join(str(gpu_id) for gpu_id in gpu_ids)
-    env_cmd = orchestrator.config.get_remote_env_cmd(orchestrator.ws.name)
+    env_cmd = backend.env_cmd(orchestrator.ws.name)
 
     if orchestrator.config.experiment_mode in ("server_codex", "server_claude"):
         arg_parts = [
@@ -61,11 +66,16 @@ def build_experiment_skill_dict(
             "args": pack_skill_args(*arg_parts),
         }
 
+    # For local backend, pass "local" as ssh_server so the experimenter prompt
+    # knows to run commands directly instead of using SSH MCP.
+    connection_id = orchestrator.config.ssh_server if backend.backend_type == "ssh" else "local"
+    project_base = orchestrator.config.remote_base if backend.backend_type == "ssh" else str(orchestrator.ws.active_root)
+
     arg_parts = [
         ws,
         mode,
-        orchestrator.config.ssh_server,
-        orchestrator.config.remote_base,
+        connection_id,
+        project_base,
         env_cmd,
         gpu_ids_str,
     ]
@@ -86,15 +96,19 @@ def _build_experiment_supervisor_skill(
     poll_interval_sec: int,
 ) -> dict:
     """Build the always-on background experiment supervisor skill."""
-    env_cmd = orchestrator.config.get_remote_env_cmd(orchestrator.ws.name)
+    from sibyl.compute import get_backend
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
+    env_cmd = backend.env_cmd(orchestrator.ws.name)
+    connection_id = orchestrator.config.ssh_server if backend.backend_type == "ssh" else "local"
+    project_base = orchestrator.config.remote_base if backend.backend_type == "ssh" else str(orchestrator.ws.active_root)
     task_ids_csv = ",".join(task_ids)
     return {
         "name": "sibyl-experiment-supervisor",
         "args": pack_skill_args(
             ws,
             mode,
-            orchestrator.config.ssh_server,
-            orchestrator.config.remote_base,
+            connection_id,
+            project_base,
             env_cmd,
             task_ids_csv,
             poll_interval_sec,
@@ -125,6 +139,22 @@ def build_experiment_skill_action(
     )
     is_server = orchestrator.config.experiment_mode in ("server_codex", "server_claude")
     poll_sec = 120 if mode == "PILOT" else 300
+    exp_monitor: dict[str, Any] = {
+        "poll_interval_sec": poll_sec,
+        "wake_check_interval_sec": _default_wake_check_interval_sec(poll_sec),
+        "wake_cmd": build_repo_python_cli_command(
+            "experiment-supervisor-drain-wake",
+            orchestrator.workspace_path,
+        ),
+    }
+    if orchestrator.config.supervisor_enabled:
+        exp_monitor["background_agent"] = _build_experiment_supervisor_skill(
+            orchestrator,
+            mode,
+            ws,
+            task_ids=[],
+            poll_interval_sec=poll_sec,
+        )
     return action_cls(
         action_type="skill",
         skills=[skill],
@@ -136,21 +166,7 @@ def build_experiment_skill_action(
             )
         ),
         stage=stage,
-        experiment_monitor={
-            "poll_interval_sec": poll_sec,
-            "wake_check_interval_sec": _default_wake_check_interval_sec(poll_sec),
-            "wake_cmd": build_repo_python_cli_command(
-                "experiment-supervisor-drain-wake",
-                orchestrator.workspace_path,
-            ),
-            "background_agent": _build_experiment_supervisor_skill(
-                orchestrator,
-                mode,
-                ws,
-                task_ids=[],
-                poll_interval_sec=poll_sec,
-            ),
-        },
+        experiment_monitor=exp_monitor,
     )
 
 
@@ -183,7 +199,7 @@ def build_experiment_batch_action(
     running_gpus = get_running_gpu_ids(orchestrator.ws.active_root)
 
     if running_tasks or running_gpus:
-        completed_set, _, _, _ = _load_progress(orchestrator.ws.active_root)
+        completed_set, _, _, _, _ = _load_progress(orchestrator.ws.active_root)
         if _sync_completed_tasks(exp_state, running_tasks, completed_set):
             save_experiment_state(orchestrator.ws.active_root, exp_state)
             running_tasks = get_running_tasks(exp_state)
@@ -212,14 +228,14 @@ def build_experiment_batch_action(
 
     exp_state = load_experiment_state(orchestrator.ws.active_root)
     if not exp_state.tasks:
-        _, recovered_running_ids, _, _ = _load_progress(orchestrator.ws.active_root)
+        _, recovered_running_ids, _, _, _ = _load_progress(orchestrator.ws.active_root)
         if recovered_running_ids:
             exp_state = migrate_from_gpu_progress(orchestrator.ws.active_root)
             save_experiment_state(orchestrator.ws.active_root, exp_state)
 
     running_tasks = get_running_tasks(exp_state)
     if running_tasks:
-        completed_set, _, _, _ = _load_progress(orchestrator.ws.active_root)
+        completed_set, _, _, _, _ = _load_progress(orchestrator.ws.active_root)
         if _sync_completed_tasks(exp_state, running_tasks, completed_set):
             save_experiment_state(orchestrator.ws.active_root, exp_state)
 
@@ -334,7 +350,7 @@ def build_experiment_batch_action(
     register_dispatched_tasks(
         orchestrator.ws.active_root,
         task_gpu_map,
-        _remote_project_dir(orchestrator),
+        _project_dir(orchestrator),
     )
 
     monitor = build_experiment_monitor(
@@ -342,6 +358,7 @@ def build_experiment_batch_action(
         mode,
         all_task_ids,
         est_min,
+        task_gpu_map=task_gpu_map,
     )
 
     action_type = "skills_parallel" if len(skills) > 1 else "skill"
@@ -360,30 +377,41 @@ def build_experiment_monitor(
     mode: str,
     task_ids: list[str],
     estimated_minutes: int,
+    *,
+    task_gpu_map: dict[str, list[int]] | None = None,
 ) -> dict:
-    """Build experiment monitor config for background progress tracking."""
-    from sibyl.gpu_scheduler import experiment_monitor_script
+    """Build experiment monitor config for background progress tracking.
 
-    remote_dir = _remote_project_dir(orchestrator)
+    When ``supervisor_enabled`` is False (default), the ``background_agent``
+    field is omitted and the PostToolUse hook launches the bash monitor
+    daemon automatically — zero LLM token cost for experiment monitoring.
+    """
+    from sibyl.compute import get_backend
+
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
+    remote_dir = _project_dir(orchestrator)
     timeout_min = max(30, estimated_minutes * 2) if estimated_minutes > 0 else 0
     timeout_min = max(timeout_min, max(1, orchestrator.config.experiment_timeout // 60))
     poll_sec = 120 if estimated_minutes <= 15 else 300
     marker = project_marker_file(orchestrator.ws.root, "exp_monitor")
-    background_agent = _build_experiment_supervisor_skill(
-        orchestrator,
-        mode,
-        str(orchestrator.ws.active_root),
-        task_ids=task_ids,
-        poll_interval_sec=poll_sec,
-    )
 
-    script = experiment_monitor_script(
-        ssh_server=orchestrator.config.ssh_server,
-        remote_project_dir=remote_dir,
+    # Adaptive heartbeat interval based on estimated remaining time
+    if estimated_minutes <= 30:
+        heartbeat_polls = 3  # ~5min with 120s poll
+    elif estimated_minutes <= 120:
+        heartbeat_polls = 5  # ~15min with 300s poll
+    else:
+        heartbeat_polls = 6  # ~30min with 300s poll
+
+    script = backend.experiment_monitor_script(
+        project_dir=remote_dir,
         task_ids=task_ids,
         poll_interval_sec=poll_sec,
         timeout_minutes=timeout_min,
         marker_file=marker,
+        workspace_path=str(orchestrator.ws.root),
+        heartbeat_polls=heartbeat_polls,
+        task_gpu_map=task_gpu_map,
     )
 
     done_checks = " && ".join(
@@ -391,14 +419,15 @@ def build_experiment_monitor(
         for task_id in task_ids
     )
 
-    return {
+    is_local = backend.backend_type == "local"
+    monitor: dict[str, Any] = {
         "script": script,
         "marker_file": marker,
         "task_ids": task_ids,
         "timeout_minutes": timeout_min,
         "poll_interval_sec": poll_sec,
         "wake_check_interval_sec": _default_wake_check_interval_sec(poll_sec),
-        "ssh_connection": orchestrator.config.ssh_server,
+        "ssh_connection": "" if is_local else orchestrator.config.ssh_server,
         "check_cmd": done_checks,
         "remote_dir": remote_dir,
         "dynamic_dispatch": True,
@@ -410,8 +439,20 @@ def build_experiment_monitor(
             "dispatch",
             orchestrator.workspace_path,
         ),
-        "background_agent": background_agent,
     }
+
+    # Only include the Opus supervisor subagent when explicitly enabled.
+    # By default, the PostToolUse hook launches a pure bash daemon instead.
+    if orchestrator.config.supervisor_enabled:
+        monitor["background_agent"] = _build_experiment_supervisor_skill(
+            orchestrator,
+            mode,
+            str(orchestrator.ws.active_root),
+            task_ids=task_ids,
+            poll_interval_sec=poll_sec,
+        )
+
+    return monitor
 
 
 def build_gpu_poll_action(
@@ -421,23 +462,26 @@ def build_gpu_poll_action(
     action_cls: type[Any],
 ) -> Any:
     """Return a gpu_poll action for the main session to execute."""
-    from sibyl.gpu_scheduler import gpu_poll_wait_script, nvidia_smi_query_cmd
+    from sibyl.compute import get_backend
+    from sibyl.gpu_scheduler import nvidia_smi_query_cmd
 
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
     aggressive = orchestrator.config.gpu_aggressive_mode
     interval_min = orchestrator.config.gpu_poll_interval_sec // 60
     marker_file = project_marker_file(orchestrator.ws.root, "gpu_free")
+    is_local = backend.backend_type == "local"
     mode_desc = (
         f"（流氓模式：<{orchestrator.config.gpu_aggressive_threshold_pct}% 显存占用也抢）"
         if aggressive
         else ""
     )
+    poll_method = "本地 nvidia-smi" if is_local else "SSH MCP"
     return action_cls(
         action_type="gpu_poll",
         gpu_poll={
-            "ssh_connection": orchestrator.config.ssh_server,
+            "ssh_connection": "" if is_local else orchestrator.config.ssh_server,
             "query_cmd": nvidia_smi_query_cmd(include_total=aggressive),
-            "script": gpu_poll_wait_script(
-                ssh_server=orchestrator.config.ssh_server,
+            "script": backend.gpu_poll_script(
                 candidate_gpu_ids=list(range(orchestrator.config.max_gpus)),
                 threshold_mb=orchestrator.config.gpu_free_threshold_mb,
                 poll_interval_sec=orchestrator.config.gpu_poll_interval_sec,
@@ -456,7 +500,7 @@ def build_gpu_poll_action(
         },
         description=(
             f"轮询等待空闲 GPU（最多 {orchestrator.config.max_gpus} 张，"
-            f"每 {interval_min}min 通过 SSH MCP 检查，"
+            f"每 {interval_min}min 通过{poll_method}检查，"
             f"{'无限等待' if orchestrator.config.gpu_poll_max_attempts == 0 else f'最多 {orchestrator.config.gpu_poll_max_attempts} 次'}）"
             f"{mode_desc}"
         ),
@@ -478,7 +522,7 @@ def build_experiment_wait_action(
     from sibyl.experiment_recovery import load_experiment_state
 
     exp_state = load_experiment_state(orchestrator.ws.active_root)
-    _, _, running_map, _ = _load_progress(orchestrator.ws.active_root)
+    _, _, running_map, _, _ = _load_progress(orchestrator.ws.active_root)
 
     all_running = running_tasks if running_tasks else list(running_map.keys())
     if not all_running:
@@ -536,7 +580,7 @@ def build_experiment_wait_action(
     else:
         poll_interval_sec = 600
 
-    remote_dir = _remote_project_dir(orchestrator)
+    remote_dir = _project_dir(orchestrator)
     done_checks = " && ".join(
         f'test -f {remote_dir}/exp/results/{task_id}_DONE && echo "{task_id}:DONE" || echo "{task_id}:PENDING"'
         for task_id in all_running
@@ -560,41 +604,50 @@ def build_experiment_wait_action(
         f"  {task_detail}"
     )
 
+    from sibyl.compute import get_backend
+    backend = get_backend(orchestrator.config, str(orchestrator.ws.active_root))
+    is_local = backend.backend_type == "local"
+
+    exp_monitor: dict[str, Any] = {
+        "ssh_connection": "" if is_local else orchestrator.config.ssh_server,
+        "check_cmd": done_checks,
+        "pid_check_cmd": pid_checks,
+        "progress_check_cmd": progress_checks,
+        "remote_dir": remote_dir,
+        "task_ids": all_running,
+        "poll_interval_sec": poll_interval_sec,
+        "wake_check_interval_sec": _default_wake_check_interval_sec(poll_interval_sec),
+        "max_remaining_min": max_remaining_min,
+        "task_status": task_status_lines,
+        "dynamic_dispatch": True,
+        "wake_cmd": build_repo_python_cli_command(
+            "experiment-supervisor-drain-wake",
+            orchestrator.workspace_path,
+        ),
+        "dispatch_cmd": build_repo_python_cli_command(
+            "dispatch",
+            orchestrator.workspace_path,
+        ),
+        "status_cmd": build_repo_python_cli_command(
+            "experiment_status",
+            orchestrator.workspace_path,
+        ),
+    }
+    if orchestrator.config.supervisor_enabled:
+        exp_monitor["background_agent"] = _build_experiment_supervisor_skill(
+            orchestrator,
+            "PILOT" if stage == "pilot_experiments" else "FULL",
+            str(orchestrator.ws.active_root),
+            task_ids=all_running,
+            poll_interval_sec=poll_interval_sec,
+        )
+
     return action_cls(
         action_type="experiment_wait",
         description=desc,
         stage=stage,
         estimated_minutes=max_remaining_min,
         experiment_monitor={
-            "ssh_connection": orchestrator.config.ssh_server,
-            "check_cmd": done_checks,
-            "pid_check_cmd": pid_checks,
-            "progress_check_cmd": progress_checks,
-            "remote_dir": remote_dir,
-            "task_ids": all_running,
-            "poll_interval_sec": poll_interval_sec,
-            "wake_check_interval_sec": _default_wake_check_interval_sec(poll_interval_sec),
-            "max_remaining_min": max_remaining_min,
-            "task_status": task_status_lines,
-            "dynamic_dispatch": True,
-            "wake_cmd": build_repo_python_cli_command(
-                "experiment-supervisor-drain-wake",
-                orchestrator.workspace_path,
-            ),
-            "dispatch_cmd": build_repo_python_cli_command(
-                "dispatch",
-                orchestrator.workspace_path,
-            ),
-            "status_cmd": build_repo_python_cli_command(
-                "experiment_status",
-                orchestrator.workspace_path,
-            ),
-            "background_agent": _build_experiment_supervisor_skill(
-                orchestrator,
-                "PILOT" if stage == "pilot_experiments" else "FULL",
-                str(orchestrator.ws.active_root),
-                task_ids=all_running,
-                poll_interval_sec=poll_interval_sec,
-            ),
+            **exp_monitor,
         },
     )

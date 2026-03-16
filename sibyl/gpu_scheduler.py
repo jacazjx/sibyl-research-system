@@ -25,6 +25,7 @@ GPU polling:
 import fcntl
 import json
 import re
+import shlex
 import time
 from collections import deque
 from contextlib import contextmanager
@@ -107,7 +108,7 @@ def _lease_entry_matches_running(gpu_id: int, entry: dict) -> bool:
         return False
     workspace_root = Path(workspace_raw)
     try:
-        _, _, running_map, _ = _load_progress(workspace_root)
+        _, _, running_map, _, _ = _load_progress(workspace_root)
     except Exception:
         return False
     task_ids = set(entry.get("task_ids") or [])
@@ -138,7 +139,7 @@ def sync_workspace_gpu_leases(
     """Synchronize global GPU leases with a workspace's local running map."""
     workspace_root = Path(workspace_root).resolve()
     if running_map is None:
-        _, _, running_map, _ = _load_progress(workspace_root)
+        _, _, running_map, _, _ = _load_progress(workspace_root)
     normalized_running = running_map if isinstance(running_map, dict) else {}
     workspace_key = str(workspace_root)
     project_name = workspace_root.parent.name if workspace_root.name == "current" else workspace_root.name
@@ -382,16 +383,17 @@ def estimate_batch_minutes(batch: list[dict], tasks: list[dict],
     return max_est
 
 
-def _load_progress(workspace_root: Path) -> tuple[set, set, dict, dict]:
-    """Load completed, running, and timing info from gpu_progress.json.
+def _load_progress(workspace_root: Path) -> tuple[set, set, dict, dict, set]:
+    """Load completed, running, failed, and timing info from gpu_progress.json.
 
-    Returns (completed_ids, running_ids, running_map, timings).
+    Returns (completed_ids, running_ids, running_map, timings, failed_ids).
     running_map: {task_id: {"gpu_ids": [...], "started_at": "..."}}
     """
     progress_path = workspace_root / "exp" / "gpu_progress.json"
     completed = set()
     running_map = {}
     timings = {}
+    failed = set()
     if progress_path.exists():
         try:
             with open(progress_path, encoding="utf-8") as f:
@@ -399,9 +401,10 @@ def _load_progress(workspace_root: Path) -> tuple[set, set, dict, dict]:
             completed = set(progress.get("completed", []))
             running_map = progress.get("running", {})
             timings = progress.get("timings", {})
+            failed = set(progress.get("failed", []))
         except (json.JSONDecodeError, OSError):
             pass
-    return completed, set(running_map.keys()), running_map, timings
+    return completed, set(running_map.keys()), running_map, timings, failed
 
 
 def register_running_tasks(workspace_root: Path, task_gpu_map: dict[str, list[int]]) -> None:
@@ -468,7 +471,7 @@ def unregister_running_task(workspace_root: Path, task_id: str) -> None:
 
 def get_running_gpu_ids(workspace_root: Path) -> list[int]:
     """Get GPU IDs currently occupied by running tasks."""
-    _, _, running_map, _ = _load_progress(workspace_root)
+    _, _, running_map, _, _ = _load_progress(workspace_root)
     occupied = set()
     for info in running_map.values():
         occupied.update(info.get("gpu_ids", []))
@@ -505,7 +508,7 @@ def get_next_batch(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
         return None
 
     # Load progress (completed + running)
-    completed, running_ids, _, _ = _load_progress(workspace_root)
+    completed, running_ids, _, _, _ = _load_progress(workspace_root)
 
     # Filter out completed AND running tasks
     excluded = completed | running_ids
@@ -556,7 +559,7 @@ def get_batch_info(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
         return None
 
     # Load progress (completed + running)
-    completed, running_ids, _, timings = _load_progress(workspace_root)
+    completed, running_ids, _, timings, _ = _load_progress(workspace_root)
 
     # Filter out completed AND running tasks
     excluded = completed | running_ids
@@ -866,29 +869,33 @@ def experiment_monitor_script(
     timeout_minutes: int = 0,
     marker_file: str = "/tmp/sibyl_exp_monitor.json",
     notify_cmd: str = "",
+    *,
+    workspace_path: str = "",
+    heartbeat_polls: int = 3,
+    task_gpu_map: dict[str, list[int]] | None = None,
 ) -> str:
     """Generate a bash script that monitors running experiments via SSH.
 
     The script:
-    1. Periodically checks for DONE marker files on the remote server
-    2. Collects gpu_progress.json updates from completed tasks
-    3. Writes status to local marker_file for the orchestrator to read
-    4. Optionally runs notify_cmd when tasks complete (e.g., lark notification)
-    5. Exits when all monitored tasks have DONE markers or on timeout
+    1. Checks DONE/PID status via batched SSH (single connection per poll)
+    2. Refreshes GPU state via nvidia-smi (zero LLM token cost)
+    3. Calls cli_dispatch_tasks when tasks complete
+    4. Detects stuck processes (dead PID without DONE marker)
+    5. Writes wake events to the supervisor wake queue
+    6. Exits when all monitored tasks have DONE markers or on timeout
 
-    This runs as a pure bash background job — no LLM tokens consumed.
+    This replaces the Opus experiment-supervisor subagent with a pure bash
+    daemon — zero LLM tokens consumed for routine monitoring.
 
     Args:
         ssh_server: SSH host to connect to
-        remote_project_dir: Remote project directory (e.g., /home/user/sibyl_system/projects/ttt-dlm)
+        remote_project_dir: Remote project directory
         task_ids: List of task IDs to monitor
         poll_interval_sec: Seconds between checks (default 300 = 5 min)
         timeout_minutes: Maximum monitoring time; 0 = unlimited
         marker_file: Local path to write monitoring status JSON
-        notify_cmd: Optional shell command to run on completion (e.g., curl webhook)
-
-    Returns:
-        Bash script string
+        notify_cmd: Optional shell command to run on completion
+        workspace_path: Local workspace root (for GPU refresh + dispatch)
     """
     task_ids_str = " ".join(task_ids)
     task_count = len(task_ids)
@@ -911,10 +918,155 @@ def experiment_monitor_script(
         # Notification on task completion
         {notify_cmd}"""
 
+    # GPU refresh and dispatch blocks (only when workspace_path is provided)
+    gpu_refresh_block = ""
+    dispatch_block = ""
+    wake_queue_block = ""
+    stuck_detection_block = ""
+    final_sync_block = ""
+
+    if workspace_path:
+        from sibyl._paths import REPO_ROOT
+
+        repo_root = str(REPO_ROOT)
+        python_exe = f"{repo_root}/.venv/bin/python3"
+
+        # Wake queue path — matches runtime_cli._EXPERIMENT_MAIN_WAKE_QUEUE
+        wake_queue = f"{workspace_path}/exp/experiment_supervisor_main_wake.jsonl"
+        # Also check iteration-dirs active workspace
+        wake_queue_alt = f"{workspace_path}/current/exp/experiment_supervisor_main_wake.jsonl"
+
+        wake_queue_block = f'''
+# Helper: enqueue a wake event for the main system
+_enqueue_wake() {{
+    local kind="$1" summary="$2" urgency="${{3:-high}}" requires_main="${{4:-false}}"
+    local ts=$(date +%s%3N)
+    local queue="{wake_queue}"
+    [ -f "{wake_queue_alt}" ] && queue="{wake_queue_alt}"
+    mkdir -p "$(dirname "$queue")"
+    printf '%s\\n' "{{\\"event_id\\":\\"wake-${{ts}}-monitor\\",\\"owner_id\\":\\"monitor_daemon_$$\\",\\"kind\\":\\"$kind\\",\\"summary\\":\\"$summary\\",\\"urgency\\":\\"$urgency\\",\\"requires_main_system\\":$requires_main,\\"created_at\\":$ts}}" \\
+        >> "$queue"
+}}
+'''
+
+        # Build task_gpu_map JSON for digest analysis
+        _task_gpu_json = json.dumps(task_gpu_map or {})
+
+        # Adaptive heartbeat: based on estimated remaining time
+        # <30min→every 3 polls, 30-120min→every 5 polls, >120min→every 6 polls
+        heartbeat_interval = heartbeat_polls
+
+        gpu_refresh_block = f'''
+    # ── GPU State Refresh (every poll — needed for real-time free GPU detection) ──
+    GPU_OUTPUT=$(ssh {ssh_server} "nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits" 2>/dev/null)
+    if [ $? -eq 0 ] && [ -n "$GPU_OUTPUT" ]; then
+        cd "{repo_root}" && "{python_exe}" -m sibyl.cli record-gpu-poll \\
+            "{workspace_path}" --nvidia-smi-output "$GPU_OUTPUT" \\
+            --source "monitor_daemon" > /dev/null 2>&1
+
+        # ── GPU Efficiency Digest (every {heartbeat_interval} polls) ──
+        if [ $((i % {heartbeat_interval})) -eq 0 ]; then
+            DIGEST=$("{python_exe}" -c "
+import json, sys
+from sibyl.experiment_digest import analyze_gpu_efficiency, format_digest_for_llm, build_digest
+gpu_out = sys.argv[1]
+task_gpus = json.loads(sys.argv[2])
+progress = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {{}}
+analysis = analyze_gpu_efficiency(gpu_out, running_task_gpus=task_gpus)
+digest = build_digest(analysis, [], analysis.get('recommendations', []), task_progress=progress, elapsed_min=int(sys.argv[4]) if len(sys.argv) > 4 else 0)
+print(json.dumps(digest))
+" "$GPU_OUTPUT" {shlex.quote(_task_gpu_json)} "${{PROGRESS_JSON:-{{}}}}" "$(((${{elapsed:-0}}) / 60))" 2>/dev/null)
+
+            if [ -n "$DIGEST" ]; then
+                # Check for free GPUs in digest → proactive dispatch
+                FREE_COUNT=$(echo "$DIGEST" | "{python_exe}" -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('gpu_analysis',{{}}).get('free_gpus',[])))" 2>/dev/null || echo "0")
+                if [ "$FREE_COUNT" -gt 0 ] && [ "$DISPATCH" != "true" ]; then
+                    DISPATCH_RESULT=$(cd "{repo_root}" && "{python_exe}" -m sibyl.cli dispatch "{workspace_path}" 2>/dev/null)
+                    PROACTIVE_COUNT=$(echo "$DISPATCH_RESULT" | "{python_exe}" -c \\
+                        "import json,sys; d=json.load(sys.stdin); print(len(d.get('dispatch',[])))" 2>/dev/null || echo "0")
+                    if [ "$PROACTIVE_COUNT" -gt 0 ]; then
+                        _enqueue_wake "dispatch_ready" "$PROACTIVE_COUNT tasks dispatched to free GPUs" "high" "true"
+                    fi
+                fi
+
+                # Check for underutilized GPUs → notify main system
+                UNDERUTIL_COUNT=$(echo "$DIGEST" | "{python_exe}" -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('gpu_analysis',{{}}).get('underutilized',[])))" 2>/dev/null || echo "0")
+                if [ "$UNDERUTIL_COUNT" -gt 0 ]; then
+                    _enqueue_wake "gpu_underutilized" "$UNDERUTIL_COUNT GPUs underutilized" "medium" "false"
+                fi
+
+                # Periodic review with full digest
+                _enqueue_wake "periodic_review" "Digest available" "low" "false"
+            fi
+        fi
+    fi
+
+    # ── Append to monitor history ──
+    echo "{{\\"ts\\": $(date +%s), \\"poll\\": $i, \\"done_count\\": $done_count, \\"total\\": $TOTAL}}" >> "{workspace_path}/exp/monitor_history.jsonl" 2>/dev/null
+'''
+
+        dispatch_block = f'''
+    # ── Dynamic Dispatch (when new tasks completed) ──
+    if [ "$DISPATCH" = "true" ]; then
+        # Sync completed tasks to experiment_state.json before dispatching
+        if [ -n "$COMPLETED_JSON" ]; then
+            cd "{repo_root}" && "{python_exe}" -m sibyl.cli sync-experiment-completions \\
+                "{workspace_path}" --completed-json "[$COMPLETED_JSON]" > /dev/null 2>&1
+        fi
+        DISPATCH_RESULT=$(cd "{repo_root}" && "{python_exe}" -m sibyl.cli dispatch "{workspace_path}" 2>/dev/null)
+        DISPATCH_COUNT=$(echo "$DISPATCH_RESULT" | "{python_exe}" -c \\
+            "import json,sys; d=json.load(sys.stdin); print(len(d.get('dispatch',[])))" 2>/dev/null || echo "0")
+        if [ "$DISPATCH_COUNT" -gt 0 ]; then
+            _enqueue_wake "dispatch_ready" "$DISPATCH_COUNT new tasks dispatched" "high" "true"
+        fi
+    fi
+'''
+
+        final_sync_block = f'''
+        # Final sync: mark all tasks completed in experiment_state.json
+        if [ -n "$COMPLETED_JSON" ]; then
+            cd "{repo_root}" && "{python_exe}" -m sibyl.cli sync-experiment-completions \\
+                "{workspace_path}" --completed-json "[$COMPLETED_JSON]" > /dev/null 2>&1
+        fi'''
+
+        stuck_detection_block = f'''
+    # ── Stuck Process Detection ──
+    STUCK_TASKS=""
+    for task_id in "${{ALL_TASKS[@]}}"; do
+        # Skip completed tasks
+        echo ",$COMPLETED," | grep -q ",$task_id," && continue
+
+        # Check if PID is dead but no DONE marker
+        pid_status=$(ssh {ssh_server} "
+            pid=\\$(cat {remote_project_dir}/exp/results/${{task_id}}.pid 2>/dev/null)
+            if [ -n \\"\\$pid\\" ]; then
+                if kill -0 \\$pid 2>/dev/null; then
+                    echo ALIVE
+                else
+                    echo DEAD
+                fi
+            else
+                echo NO_PID
+            fi
+        " 2>/dev/null)
+        if [ "$pid_status" = "DEAD" ]; then
+            if [ -z "$STUCK_TASKS" ]; then
+                STUCK_TASKS="$task_id"
+            else
+                STUCK_TASKS="$STUCK_TASKS,$task_id"
+            fi
+        fi
+    done
+    if [ -n "$STUCK_TASKS" ]; then
+        _enqueue_wake "task_died" "Process dead without DONE marker: $STUCK_TASKS" "high" "true"
+    fi
+'''
+
     return f'''#!/bin/bash
-# Sibyl Experiment Monitor: watch for task completion on {ssh_server}
-# Tasks: {task_ids_str}
+# Sibyl Experiment Monitor Daemon
+# Tasks: {task_ids_str} on {ssh_server}
 # Poll every {poll_interval_sec}s, timeout: {"unlimited" if timeout_minutes == 0 else f"{timeout_minutes}min"}
+# Replaces Opus experiment-supervisor — zero LLM tokens consumed.
 
 MARKER="{marker_file}"
 REMOTE_DIR="{remote_project_dir}"
@@ -922,8 +1074,8 @@ ALL_TASKS=({task_ids_str})
 TOTAL={task_count}
 start_time=$(date +%s)
 PREV_DONE_COUNT=0
-
-echo '{{"status": "monitoring", "total": {task_count}, "completed": [], "pending": {json.dumps(task_ids)}, "just_completed": [], "dispatch_needed": false}}' > "$MARKER"
+{wake_queue_block}
+echo '{{"status": "monitoring", "total": {task_count}, "completed": [], "pending": {json.dumps(task_ids)}, "dispatch_needed": false}}' > "$MARKER"
 
 i=0
 while true; do
@@ -932,15 +1084,24 @@ while true; do
     COMPLETED_JSON=""
     PENDING=""
     PENDING_JSON=""
-    JUST_COMPLETED=""
-    JUST_COMPLETED_JSON=""
     done_count=0
 
-    for task_id in "${{ALL_TASKS[@]}}"; do
-        # Check for DONE marker file on remote server
-        result=$(ssh {ssh_server} "test -f $REMOTE_DIR/exp/results/${{task_id}}_DONE && echo 'DONE' || echo 'PENDING'" 2>/dev/null)
+    # ── Batched DONE + PID check (single SSH connection) ──
+    BATCH_RESULT=$(ssh {ssh_server} "
+        for t in {task_ids_str}; do
+            if test -f $REMOTE_DIR/exp/results/${{t}}_DONE; then
+                echo \\"\\$t:DONE\\"
+            else
+                echo \\"\\$t:PENDING\\"
+            fi
+        done
+    " 2>/dev/null)
 
-        if [ "$result" = "DONE" ]; then
+    while IFS= read -r line; do
+        task_id=$(echo "$line" | cut -d: -f1)
+        status=$(echo "$line" | cut -d: -f2)
+        [ -z "$task_id" ] && continue
+        if [ "$status" = "DONE" ]; then
             done_count=$((done_count + 1))
             if [ -z "$COMPLETED" ]; then
                 COMPLETED="$task_id"
@@ -954,44 +1115,56 @@ while true; do
                 PENDING="$task_id"
                 PENDING_JSON="\\"$task_id\\""
             else
-                PENDING="$PENDING,$task_id"
+                PENDING="$PENDING $task_id"
                 PENDING_JSON="$PENDING_JSON, \\"$task_id\\""
             fi
         fi
-    done
+    done <<< "$BATCH_RESULT"
 
-    # Detect newly completed tasks since last poll
+    # Detect newly completed tasks
     DISPATCH="false"
     if [ "$done_count" -gt "$PREV_DONE_COUNT" ]; then
         DISPATCH="true"
     fi
     PREV_DONE_COUNT=$done_count
 
-    # Read progress for pending (non-DONE) tasks
+    # ── Collect PROGRESS snapshots (single SSH) ──
     PROGRESS_JSON=""
-    for task_id in "${{ALL_TASKS[@]}}"; do
-        prog=$(ssh {ssh_server} "cat $REMOTE_DIR/exp/results/${{task_id}}_PROGRESS.json 2>/dev/null || echo ''" 2>/dev/null)
-        if [ -n "$prog" ]; then
-            entry="\\"$task_id\\": $prog"
-            if [ -z "$PROGRESS_JSON" ]; then
-                PROGRESS_JSON="$entry"
-            else
-                PROGRESS_JSON="$PROGRESS_JSON, $entry"
+    if [ -n "$PENDING" ]; then
+        PROG_RESULT=$(ssh {ssh_server} "
+            for t in $PENDING; do
+                prog=\\$(cat $REMOTE_DIR/exp/results/${{t}}_PROGRESS.json 2>/dev/null)
+                [ -n \\"\\$prog\\" ] && echo \\"${{t}}:\\$prog\\"
+            done
+        " 2>/dev/null)
+
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            tid=$(echo "$line" | cut -d: -f1)
+            prog=$(echo "$line" | cut -d: -f2-)
+            if [ -n "$prog" ]; then
+                entry="\\"$tid\\": $prog"
+                if [ -z "$PROGRESS_JSON" ]; then
+                    PROGRESS_JSON="$entry"
+                else
+                    PROGRESS_JSON="$PROGRESS_JSON, $entry"
+                fi
             fi
-        fi
-    done
+        done <<< "$PROG_RESULT"
+    fi
 
     elapsed=$(( $(date +%s) - start_time ))
     echo "[monitor $i] $done_count/$TOTAL done (elapsed: ${{elapsed}}s)"
-
-    # Write status to marker file
-    if [ "$done_count" -eq "$TOTAL" ]; then
-        echo '{{"status": "all_complete", "completed": ['$COMPLETED_JSON'], "pending": [], "just_completed": [], "dispatch_needed": false, "progress": {{'$PROGRESS_JSON'}}, "elapsed_sec": '$elapsed', "poll_count": '$i'}}' > "$MARKER"
+{gpu_refresh_block}{dispatch_block}{stuck_detection_block}
+    # ── Write marker file ──
+    if [ "$done_count" -eq "$TOTAL" ]; then{final_sync_block}
+        echo '{{"status": "all_complete", "completed": ['$COMPLETED_JSON'], "pending": [], "dispatch_needed": false, "progress": {{'$PROGRESS_JSON'}}, "elapsed_sec": '$elapsed', "poll_count": '$i'}}' > "$MARKER"
         echo "[monitor] All {task_count} tasks complete!"{notify_block}
+        [ -n "$(type -t _enqueue_wake 2>/dev/null)" ] && _enqueue_wake "all_complete" "All {task_count} tasks finished" "high" "true"
         exit 0
     fi
 
-    echo '{{"status": "monitoring", "completed": ['$COMPLETED_JSON'], "pending": ['$PENDING_JSON'], "just_completed": [], "dispatch_needed": '$DISPATCH', "progress": {{'$PROGRESS_JSON'}}, "elapsed_sec": '$elapsed', "poll_count": '$i'}}' > "$MARKER"
+    echo '{{"status": "monitoring", "completed": ['$COMPLETED_JSON'], "pending": ['$PENDING_JSON'], "dispatch_needed": '$DISPATCH', "progress": {{'$PROGRESS_JSON'}}, "elapsed_sec": '$elapsed', "poll_count": '$i'}}' > "$MARKER"
 {timeout_check}
     sleep {poll_interval_sec}
 done

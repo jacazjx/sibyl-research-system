@@ -13,6 +13,7 @@ from sibyl.experiment_recovery import (
     get_running_tasks,
     recover_from_detection,
     sync_to_gpu_progress,
+    mark_tasks_completed,
     migrate_from_gpu_progress,
 )
 
@@ -293,6 +294,85 @@ class TestStateSyncWithGpuProgress:
         assert state.tasks["t4"]["gpu_ids"] == [0, 1]
 
 
+class TestMarkTasksCompleted:
+    """Tests for daemon-driven mark_tasks_completed."""
+
+    def test_marks_running_tasks_completed(self, tmp_path):
+        state = _make_state_with_tasks(t1="running", t2="running", t3="completed")
+        save_experiment_state(tmp_path, state)
+        _write_gpu_progress(tmp_path, {
+            "completed": ["t3"],
+            "failed": [],
+            "running": {
+                "t1": {"gpu_ids": [0], "started_at": "2026-01-01"},
+                "t2": {"gpu_ids": [1], "started_at": "2026-01-01"},
+            },
+            "timings": {},
+        })
+
+        result = mark_tasks_completed(tmp_path, ["t1", "t2"])
+        assert result["completed_count"] == 2
+        assert sorted(result["completed"]) == ["t1", "t2"]
+
+        # Verify experiment_state.json updated
+        updated = load_experiment_state(tmp_path)
+        assert updated.tasks["t1"]["status"] == "completed"
+        assert updated.tasks["t2"]["status"] == "completed"
+        assert updated.tasks["t3"]["status"] == "completed"
+        assert len(updated.recovery_log) == 2
+
+        # Verify gpu_progress.json synced
+        gp = _read_gpu_progress(tmp_path)
+        assert "t1" in gp["completed"]
+        assert "t2" in gp["completed"]
+        assert "t1" not in gp.get("running", {})
+
+    def test_marks_failed_tasks(self, tmp_path):
+        state = _make_state_with_tasks(t1="running", t2="running")
+        save_experiment_state(tmp_path, state)
+        _write_gpu_progress(tmp_path, {
+            "completed": [], "failed": [],
+            "running": {
+                "t1": {"gpu_ids": [0], "started_at": "2026-01-01"},
+                "t2": {"gpu_ids": [1], "started_at": "2026-01-01"},
+            },
+            "timings": {},
+        })
+
+        result = mark_tasks_completed(tmp_path, ["t1"], failed_ids=["t2"])
+        assert result["completed_count"] == 1
+        assert result["failed_count"] == 1
+
+        updated = load_experiment_state(tmp_path)
+        assert updated.tasks["t1"]["status"] == "completed"
+        assert updated.tasks["t2"]["status"] == "failed"
+
+    def test_skips_already_completed_tasks(self, tmp_path):
+        state = _make_state_with_tasks(t1="completed", t2="running")
+        save_experiment_state(tmp_path, state)
+        _write_gpu_progress(tmp_path, {
+            "completed": ["t1"], "failed": [],
+            "running": {"t2": {"gpu_ids": [0], "started_at": "2026-01-01"}},
+            "timings": {},
+        })
+
+        result = mark_tasks_completed(tmp_path, ["t1", "t2"])
+        assert result["completed_count"] == 1
+        assert result["completed"] == ["t2"]
+
+    def test_noop_when_empty(self, tmp_path):
+        state = _make_state_with_tasks(t1="running")
+        save_experiment_state(tmp_path, state)
+
+        result = mark_tasks_completed(tmp_path, [])
+        assert result["completed_count"] == 0
+        assert result["failed_count"] == 0
+
+        # State should not have been written (no log entries)
+        updated = load_experiment_state(tmp_path)
+        assert updated.recovery_log == []
+
+
 class TestEndToEndRecovery:
     """Full pipeline: register → simulate interrupt → recover."""
 
@@ -345,7 +425,7 @@ class TestEndToEndRecovery:
         save_experiment_state(tmp_path, state)
         sync_to_gpu_progress(tmp_path, state)
 
-        completed, running_ids, _, _ = _load_progress(tmp_path)
+        completed, running_ids, _, _, _ = _load_progress(tmp_path)
         assert "train_baseline" in completed
         assert "train_ablation" in running_ids
         assert "train_extra" not in running_ids
