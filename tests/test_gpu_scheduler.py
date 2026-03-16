@@ -1184,6 +1184,39 @@ class TestMonitorScriptDispatchNeeded:
 
 
 # ══════════════════════════════════════════════
+# Warn on missing dependencies
+# ══════════════════════════════════════════════
+
+def test_topo_sort_warns_on_missing_dependency(caplog):
+    """Should log a warning when a task depends on a non-existent task."""
+    import logging
+    tasks = [
+        {"id": "a", "depends_on": ["ghost"]},
+        {"id": "b", "depends_on": []},
+    ]
+    with caplog.at_level(logging.WARNING):
+        layers = topo_sort_layers(tasks)
+    assert any("ghost" in r.message for r in caplog.records)
+    # 'a' should still be included (treat missing dep as satisfied)
+    all_ids = {t["id"] for layer in layers for t in layer}
+    assert "a" in all_ids
+    assert "b" in all_ids
+
+
+def test_topo_sort_no_warning_for_valid_deps(caplog):
+    """Should not warn when all dependencies exist."""
+    import logging
+    tasks = [
+        {"id": "a", "depends_on": []},
+        {"id": "b", "depends_on": ["a"]},
+    ]
+    with caplog.at_level(logging.WARNING):
+        layers = topo_sort_layers(tasks)
+    assert not any("non-existent" in r.message for r in caplog.records)
+    assert len(layers) == 2
+
+
+# ══════════════════════════════════════════════
 # TTL-based stale lease cleanup
 # ══════════════════════════════════════════════
 

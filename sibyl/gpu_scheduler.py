@@ -24,6 +24,7 @@ GPU polling:
 """
 import fcntl
 import json
+import logging
 import re
 import shlex
 import time
@@ -32,6 +33,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sibyl._paths import get_system_state_dir
+
+_log = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -296,6 +299,11 @@ def topo_sort_layers(tasks: list[dict]) -> list[list[dict]]:
             if dep in task_map:
                 in_degree[t["id"]] += 1
                 children[dep].append(t["id"])
+            else:
+                _log.warning(
+                    "Task %s depends on non-existent task %s — treating as satisfied",
+                    t["id"], dep,
+                )
 
     layers = []
     queue = deque([tid for tid, deg in in_degree.items() if deg == 0])
