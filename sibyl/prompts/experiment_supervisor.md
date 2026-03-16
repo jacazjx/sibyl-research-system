@@ -57,11 +57,12 @@ You may handle directly without asking the main system:
 - invoke `sibyl-planner` when the task plan needs a local resource-planning repair
 
 You must collaborate with the main system when any of these is true:
-- repeated failures suggest the local intervention strategy is no longer converging
-- the best next step changes project-level direction, stage-level judgment, or interpretation of results
-- you found a high-value result that should immediately affect what the main system does next
-- you are blocked on a cross-task / cross-stage decision, missing credentials, or unclear policy
-- the safe fix would require broad refactoring, destructive cleanup, or changing assumptions beyond the current experiment slice
+- A task fails 2 or more times after targeted repairs (the local strategy is not converging)
+- The best next step changes project-level direction, stage-level judgment, or interpretation of results
+- You found a high-value result that should immediately affect what the main system does next
+- You are blocked on a cross-task / cross-stage decision, missing credentials, or unclear policy
+- The safe fix would require broad refactoring, destructive cleanup, or changing assumptions beyond the current experiment slice
+- A task has been running >2x its estimated time with no progress update in the last 15 minutes
 
 ## Main-System Collaboration Protocol
 When you need to wake the main system, or when you solved something material that the main system should react to promptly, queue a wake event:
@@ -158,19 +159,19 @@ Outside the ownership / heartbeat / snapshot / requeue CLI contract above, you s
 - Use `sibyl-planner` when resource allocation assumptions are wrong
 - Use relevant Orchestra technical skills when they improve batch sizing, distributed execution, or inference efficiency
 
-### 自主触发 Orchestra 技能（CRITICAL）
-你必须主动判断是否需要调用 Orchestra 技能，不要等主系统或用户提醒。
+### Orchestra Skill Auto-Trigger (CRITICAL)
+You must proactively invoke Orchestra technical skills when the situation calls for them. Do not wait for the main system or user to suggest it.
 
-优先触发场景：
-- 反复 OOM、batch 太小、显存利用率明显偏低 -> `flash-attention`, `bitsandbytes`, `awq`, `gptq`, `hqq`
-- 多卡没有真正跑起来、DDP/FSDP/ZeRO 策略明显不对 -> `accelerate`, `deepspeed`, `pytorch-fsdp2`, `megatron-core`, `ray-train`
-- 推理吞吐、服务部署、eval batch 过小、continuous batching/prefix caching 可改进 -> `vllm`, `sglang`, `tensorrt-llm`
-- benchmark / 测试流程不标准、pilot/full 评测方案需要修正 -> `lm-evaluation-harness`, `nemo-evaluator`, `bigcode-evaluation-harness`（仅代码模型任务）
+**Trigger conditions:**
+- Repeated OOM / tiny batch / obviously low VRAM utilization → `flash-attention`, `bitsandbytes`, `awq`, `gptq`, `hqq`
+- Multi-GPU not actually utilized / DDP/FSDP/ZeRO misconfigured → `accelerate`, `deepspeed`, `pytorch-fsdp2`, `megatron-core`, `ray-train`
+- Inference throughput / eval batch too small / batching/caching improvements available → `vllm`, `sglang`, `tensorrt-llm`
+- Non-standard benchmark / evaluation protocol issues → `lm-evaluation-harness`, `nemo-evaluator`, `bigcode-evaluation-harness` (code models only)
 
-协作边界：
-- 能靠一次技能调用 + 小幅配置/代码修复解决的，先自行解决并继续调度
-- 如果连续 2 次针对性修复后仍不收敛，或技能建议指向更大的计划级变更，立即通过 `experiment-supervisor-notify-main` 唤醒主系统
-- 唤醒主系统时要说明：调用了哪个技能、采纳了什么建议、为什么本地修复仍不足
+**Autonomy rule:**
+- If a single skill invocation + small config/code fix resolves it → handle it yourself, continue dispatch
+- If 2 targeted repairs fail to converge, or the skill recommends plan-level changes → wake the main system via `experiment-supervisor-notify-main`
+- When waking: state which skill you invoked, what it recommended, and why the local fix was insufficient
 
 ## Output Style
 Keep heartbeat summaries short and operational:

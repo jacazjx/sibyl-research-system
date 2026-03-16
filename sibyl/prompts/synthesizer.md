@@ -22,6 +22,9 @@ The 6 perspectives are:
 - **Interdisciplinary**: analogies and methods borrowed from other sciences
 - **Empiricist**: experiment-first thinking, rigorous evaluation design
 
+If `{workspace}/idea/novelty_report.md` or `{workspace}/idea/novelty_report.json` exists, treat it as the novelty checker's prior-art assessment. Candidates flagged as having collisions must be revised to differentiate or dropped.
+If `{workspace}/codex/idea_debate_review.md` exists, treat it as Codex's independent feedback from a prior round and address its concerns explicitly.
+
 Tasks:
 1. Map the landscape: identify agreements, conflicts, and complementary insights across all 6 perspectives
 2. Rank ideas by novelty + feasibility + impact, giving extra weight to ideas that survived the contrarian's challenges
@@ -30,11 +33,13 @@ Tasks:
 5. Address the most critical concerns raised in critiques, especially the contrarian's and empiricist's objections
 6. If pilot evidence exists, explicitly identify which hypotheses were strengthened, weakened, or falsified by the data, and revise the proposal accordingly
 7. Incorporate the empiricist's evaluation methodology and the interdisciplinary insights where they strengthen the proposal
-8. Write the final proposal
-9. In the final proposal, include a short section on what changed from the previous round (only when prior proposal/pilot evidence exists)
-10. Write backup ideas for potential pivot (at least 2 alternatives)
-11. Write/update a machine-readable candidate pool with candidate IDs, hypotheses, pilot focus, and current status (`front_runner`, `backup`, `dropped`)
-12. Explain your reasoning, including which perspectives you weighted most and why
+8. **Novelty verification**: For each front-runner/backup candidate, search arXiv and Google Scholar for the core contribution claim. If you find a close match, revise the candidate to clearly differentiate, or drop it and promote a backup. Document what you found in the proposal under a `## Novelty Assessment` section.
+9. If novelty report or Codex feedback from a prior round exists, explicitly describe how this round's proposal addresses those concerns under a `## Revisions from Prior Feedback` section.
+10. Write the final proposal
+11. In the final proposal, include a short section on what changed from the previous round (only when prior proposal/pilot evidence exists)
+12. Write backup ideas for potential pivot (at least 2 alternatives)
+13. Write/update a machine-readable candidate pool with candidate IDs, hypotheses, pilot focus, and current status (`front_runner`, `backup`, `dropped`)
+14. Explain your reasoning, including which perspectives you weighted most and why
 
 ## Output
 - `{workspace}/idea/proposal.md`: Final research proposal with Title, Abstract, Motivation, Research Questions, Hypotheses, Expected Contributions. When refining from pilot evidence, also include a brief `Evidence-Driven Revisions` section.
@@ -43,6 +48,9 @@ Tasks:
 - `{workspace}/idea/candidates.json`: Candidate pool, e.g. `{"candidates": [{"candidate_id": "cand_a", "title": "...", "status": "front_runner", "summary": "...", "hypotheses": ["..."], "pilot_focus": "..."}]}`
 
 ## Tool Usage
-- Use `Read` to read all perspectives and critiques
+- Use `Read` to read all perspectives, critiques, novelty report, and Codex feedback
 - Use `Glob` to find all files in perspectives/ and debate/
+- Use `mcp__arxiv-mcp-server__search_papers` for novelty verification searches
+- Use `mcp__google-scholar__search_google_scholar_key_words` for high-citation prior art
+- Use `WebSearch` for broader novelty search (workshops, tech reports, blogs)
 - Use `Write` to save outputs

@@ -27,8 +27,10 @@ For each figure/table assigned to this section in the outline's Figure & Table P
    - Save script to `{workspace}/writing/figures/gen_{figure_id}.py`
    - Output PDF to `{workspace}/writing/figures/{figure_id}.pdf`
    - Use consistent style from `style_config.py`
+   - **You MUST execute the script** with `Bash(.venv/bin/python3 {workspace}/writing/figures/gen_{figure_id}.py)` and verify the PDF was created. An unexecuted script produces no figure in the final PDF
 4. **Architecture/flow diagrams**: Write detailed TikZ description to `{workspace}/writing/figures/{figure_id}_desc.md`
 5. **Tables**: Use markdown format, bold best results, align decimals, include ± std
+6. **In-text figure references**: Use markdown image syntax `![Caption](figures/{figure_id}.pdf)` to embed figures. Do NOT write script filenames (e.g., `gen_foo.py`) as body text — they will appear as literal text in the compiled PDF
 
 ### Section-Specific Visual Requirements
 - **Method**: At least 1 architecture diagram or flowchart

@@ -66,27 +66,39 @@ Read runtime parameters from the Skill arguments:
 - Save results to `{workspace}/exp/results/full/`
 - Write `{workspace}/exp/results/summary.md`
 
-## Remote Execution
+## Execution Mode
+
+Check the `SSH server` argument to determine execution mode:
+
+### Local Mode (SSH server = "local")
+Run experiments directly on the local machine — no SSH needed:
+- Use `Bash` tool directly (NOT SSH MCP tools)
+- Set `CUDA_VISIBLE_DEVICES={gpu_id}` as environment prefix
+- 环境激活: 使用 Skill 参数中的 env command（由项目配置生成，支持 conda/venv）
+- 工作目录: 使用 `Remote base` 参数指定的路径
+
+```bash
+cd {remote_base} && CUDA_VISIBLE_DEVICES={gpu_id} [env command] python script.py
+```
+
+- PID files, PROGRESS files, DONE markers 均写入本地路径
+- 长时间任务使用 `nohup ... &` 后台运行，并用 PID 文件追踪
+
+### Remote Mode (SSH server = actual server name)
 Use `mcp__ssh-mcp-server__execute-command` to run on the remote server:
 - Server: `{ssh_server}`
 - Set `CUDA_VISIBLE_DEVICES={gpu_id}`
-- 环境激活: 使用 Skill 参数中的 `Remote env command`（由项目配置生成，支持 conda/venv）
+- 环境激活: 使用 Skill 参数中的 env command（由项目配置生成，支持 conda/venv）
 - Upload scripts first, then execute
 - 工作目录: `cd {remote_base}/projects/{project}` 作为所有操作的前置
 
 Alternatively, use `Bash` with SSH:
 ```bash
-ssh {ssh_server} "cd {remote_base}/projects/{project} && CUDA_VISIBLE_DEVICES={gpu_id} [Remote env command] python script.py"
+ssh {ssh_server} "cd {remote_base}/projects/{project} && CUDA_VISIBLE_DEVICES={gpu_id} [env command] python script.py"
 ```
 
-## 远程文件隔离规则 (CRITICAL)
-
-1. 所有实验文件（代码、日志、结果）必须放在 `{remote_base}/projects/{project}/` 内
-2. 环境激活使用 Skill 参数中的 `Remote env command`（不要硬编码 conda 命令）
-3. 共享资源检查流程：先查 `{remote_base}/shared/registry.json`，有则创建 symlink，无则下载后注册
-4. 禁止访问其他项目的目录（`{remote_base}/projects/other_project/`）
-5. 所有操作前先 `cd {remote_base}/projects/{project}`
-6. 下载的数据集如需共享，放入 `{remote_base}/shared/datasets/` 并更新 registry.json
+## Remote File Isolation
+See the injected **Experiment Execution Protocols** section for the full file isolation rules.
 
 ## Code Requirements
 - Self-contained, runnable scripts
@@ -98,144 +110,15 @@ ssh {ssh_server} "cd {remote_base}/projects/{project} && CUDA_VISIBLE_DEVICES={g
 - Make experiments batch-resumable
 - For both training and inference/evaluation workloads, prefer saturating GPU memory and throughput unless the task explicitly requires low-latency single-sample inference
 
-## 自主触发 Orchestra 技能（CRITICAL）
+## Orchestra Skill Auto-Trigger
+See the injected **Experiment Execution Protocols** section for Orchestra skill trigger rules and scenarios.
 
-如果 `Available Technical Skills` 中有明显匹配当前任务的技能，你必须在正式实现或重启实验前主动调用最相关的 1-2 个；不要等用户提醒。
-
-默认触发场景：
-- 微调 / LoRA / QLoRA / SFT -> `peft`, `axolotl`, `llama-factory`, `unsloth`
-- 多卡训练 / DDP / FSDP / ZeRO / 扩吞吐 -> `accelerate`, `deepspeed`, `pytorch-fsdp2`, `megatron-core`, `ray-train`
-- 推理吞吐 / 服务部署 / eval batch / benchmark -> `vllm`, `sglang`, `tensorrt-llm`, `lm-evaluation-harness`, `nemo-evaluator`
-- OOM / 显存利用率低 / batch 太小 / 长上下文 -> `flash-attention`, `bitsandbytes`, `awq`, `gptq`, `hqq`
-
-触发后必须把技能建议落实到实际执行：
-- 修改 batch size / eval batch / gradient accumulation / sequence length / dataloader prefetch
-- 必要时切换 `multi_gpu_strategy`、启动 DDP / DataParallel、或改用更合适的 serving / evaluation 框架
-- 如果技能建议与当前代码冲突，优先做小而明确的代码修复后再重跑，不要保守地维持低利用率配置
-
-## 进程标识与进度上报（CRITICAL）
-
-每个训练任务启动时**必须**写入 PID 文件，供系统恢复检测：
-
-```python
-import os
-from pathlib import Path
-
-# 训练进程启动时立即写入
-pid_file = Path(results_dir) / f"{task_id}.pid"
-pid_file.write_text(str(os.getpid()))
-```
-
-训练循环中**必须**每个 epoch 写入进度文件：
-
-```python
-import json
-from datetime import datetime
-from pathlib import Path
-
-def report_progress(task_id, results_dir, epoch, total_epochs, step=0,
-                    total_steps=0, loss=None, metric=None):
-    """Write progress file for system monitor to track."""
-    progress = Path(results_dir) / f"{task_id}_PROGRESS.json"
-    progress.write_text(json.dumps({
-        "task_id": task_id,
-        "epoch": epoch, "total_epochs": total_epochs,
-        "step": step, "total_steps": total_steps,
-        "loss": loss, "metric": metric or {},
-        "updated_at": datetime.now().isoformat(),
-    }))
-```
-
-- PID 文件路径: `{remote_base}/projects/{project}/exp/results/{task_id}.pid`
-- 进度文件路径: `{remote_base}/projects/{project}/exp/results/{task_id}_PROGRESS.json`
-- **不写 PID 文件的任务在系统中断后无法被恢复检测**
-- 进度文件每 epoch 覆写一次（非追加），系统监控读取最新状态
-
-## 完成标记与通知（CRITICAL）
-
-每个任务完成后**必须**写入 DONE 标记文件，供系统监控进程检测：
-
-```python
-# 任务完成时（成功或失败都要写）
-import json
-from pathlib import Path
-
-def mark_task_done(task_id, results_dir, status="success", summary=""):
-    """Write DONE marker file for system monitor to detect."""
-    # Clean up PID file
-    pid_file = Path(results_dir) / f"{task_id}.pid"
-    if pid_file.exists():
-        pid_file.unlink()
-    # Merge final progress if available
-    progress_file = Path(results_dir) / f"{task_id}_PROGRESS.json"
-    final_progress = {}
-    if progress_file.exists():
-        try:
-            final_progress = json.loads(progress_file.read_text())
-        except (json.JSONDecodeError, ValueError):
-            pass
-    # Write DONE marker
-    marker = Path(results_dir) / f"{task_id}_DONE"
-    marker.write_text(json.dumps({
-        "task_id": task_id,
-        "status": status,
-        "summary": summary,
-        "final_progress": final_progress,
-        "timestamp": __import__("datetime").datetime.now().isoformat(),
-    }))
-```
-
-- 文件路径: `{remote_base}/projects/{project}/exp/results/{task_id}_DONE`
-- 成功和失败都要写（status 字段区分）
-- 系统后台监控进程每 5 分钟检查这些文件
-- **不写 DONE 文件的任务会被视为仍在运行，可能触发超时告警**
-- 任务完成后，系统会自动将释放的 GPU 分配给排队任务（动态调度）
-
-## 显存探测与 Batch Size 自动优化（CRITICAL）
-
-**每个训练任务正式开始前，必须先运行显存探测脚本，确定当前 GPU 上能使用的最大 batch size。**
-
-### 探测流程
-在实验脚本中加入探测函数，或作为独立预处理步骤：
-
-```python
-def find_max_batch_size(model, sample_input_fn, device, start=128, min_bs=1):
-    """二分搜索当前 GPU 能承载的最大 batch size。"""
-    import torch, gc
-    high, best = start, min_bs
-    while min_bs <= high:
-        mid = (min_bs + high) // 2
-        try:
-            torch.cuda.empty_cache(); gc.collect()
-            batch = sample_input_fn(mid)
-            batch = {k: v.to(device) for k, v in batch.items()}
-            with torch.no_grad():
-                model(**batch)
-            best = mid
-            min_bs = mid + 1
-        except torch.cuda.OutOfMemoryError:
-            high = mid - 1
-            torch.cuda.empty_cache(); gc.collect()
-    return best
-```
-
-### 使用规则
-1. 默认必须执行探测；只有 task 明确要求固定 batch size 时才允许跳过
-2. 探测结果写入 `{workspace}/exp/results/{task_id}_gpu_profile.json`：
-   ```json
-   {"gpu_name": "RTX 4090", "vram_total_mb": 24564, "max_batch_size": 64,
-    "vram_used_mb": 21200, "utilization_pct": 86.3}
-   ```
-3. 正式训练/推理优先使用探测出的最大稳定 batch size，只保留很小的显存余量防止随机波动 OOM
-4. 如果显存利用率 < 70%，继续增大 batch size、序列长度、生成 batch、prefetch、gradient accumulation 或多卡并行度，直到接近满载
-5. 若首次正式运行仍 OOM，只做最小必要回退并立即重试，不要保守地下调过多
-6. 对评测 / 推理基准，同样要探测 `eval_batch_size` 或 generation batch，而不是默认单条样本串行跑
-
-### 多卡策略
-根据 task_plan.json 中的 `multi_gpu_strategy` 字段：
-- `"single"`: 单卡运行，`CUDA_VISIBLE_DEVICES` 设为 1 张 GPU
-- `"DataParallel"`: 用 `torch.nn.DataParallel` 包装模型，batch size 可按卡数线性放大
-- `"DDP"`: 用 `torchrun --nproc_per_node=N` 启动分布式训练，每卡独立 batch size
+## Process Tracking, VRAM Probing, and Multi-GPU
+See the injected **Experiment Execution Protocols** section for:
+- PID file and progress reporting protocols
+- DONE marker file protocol
+- VRAM probing and batch size optimization
+- Multi-GPU strategy (single / DataParallel / DDP)
 
 ## Evaluation Best Practices (Deep Learning)
 - Use standard public benchmarks (e.g., GLUE, SQuAD, WMT, ImageNet subsets)
@@ -263,76 +146,35 @@ When invoked with `--tasks=task_1a,task_1b`:
 - A task may have multiple GPUs assigned (e.g. GPU IDs "0,1" means 2 GPUs)
   — use `torch.nn.DataParallel` or `DistributedDataParallel` as appropriate
 
-### SSH timeout for long-running tasks
-Each task in task_plan.json declares `estimated_minutes` (required). Set SSH command
-timeout to `estimated_minutes * 2` (with a minimum of 10 minutes) to allow
-for variance. For long training jobs (>30 min), use `nohup` + periodic polling:
+### Long-running tasks
+Each task in task_plan.json declares `estimated_minutes` (required).
+For long training jobs (>30 min), use `nohup` + periodic polling:
+
+**Local mode:**
 ```bash
-# Launch in background
+cd /path && nohup bash run.sh > output.log 2>&1 &
+# Poll every N minutes
+test -f /path/DONE && cat /path/results.json
+```
+
+**Remote mode:** Set SSH command timeout to `estimated_minutes * 2` (minimum 10 minutes):
+```bash
 ssh {ssh_server} "cd /path && nohup bash run.sh > output.log 2>&1 &"
-# Poll every N minutes (check for completion marker)
 ssh {ssh_server} "test -f /path/DONE && cat /path/results.json"
 ```
 
 ### Progress tracking
-After completing each assigned task, update `{workspace}/exp/gpu_progress.json`:
-  1. Read existing file (or create `{"completed": [], "failed": [], "running": {}, "timings": {}}`)
-  2. Append completed task IDs to `completed` array
-  3. Remove completed task IDs from `running` map (if present)
-  4. Append failed task IDs to `failed` array, also remove from `running`
-  5. Record timing for each task in `timings`:
-     ```json
-     "timings": {
-       "task_1a": {
-         "planned_min": 30,
-         "actual_min": 22,
-         "start_time": "2026-03-09T12:00:00",
-         "end_time": "2026-03-09T12:22:00"
-       }
-     }
-     ```
-     - `planned_min`: from task_plan.json `estimated_minutes`
-     - `actual_min`: wall-clock time from start to finish (rounded to integer)
-     - Record timing even for failed tasks (helps calibrate future estimates)
-  6. Write back atomically (read → modify → write)
-
-**Why timing matters**: The orchestrator uses actual/planned ratios from completed tasks
-to calibrate time estimates for future batches. Accurate timing data leads to better
-scheduling and more realistic progress reporting.
-
-**Why removing from `running` matters**: The orchestrator uses `running` map to track
-which GPUs are occupied. When you remove a completed task from `running`, its GPUs
-become available for dynamic dispatch of queued tasks. If you don't remove it,
-the GPUs will appear occupied until the monitor detects the DONE marker.
-
-  7. Record experiment configuration summary in `config_snapshot`:
-     ```json
-     "timings": {
-       "task_1a": {
-         "planned_min": 30,
-         "actual_min": 22,
-         "start_time": "...", "end_time": "...",
-         "config_snapshot": {
-           "model": "bert-base-uncased",
-           "batch_size": 64,
-           "seq_len": 512,
-           "dataset_size": 10000,
-           "gpu_model": "RTX 4090",
-           "gpu_count": 1
-         }
-       }
-     }
-     ```
-     The orchestrator uses config snapshots to intelligently adjust time predictions
-     when experiment configurations change between iterations. For example:
-     - Dataset size doubles → scale estimate proportionally
-     - Switching from bert-base to bert-large → expect longer training
-     - Batch size halved (OOM fallback) → more iterations needed
-     Record whatever config fields are relevant to execution time.
+See the injected **Experiment Execution Protocols** section for the full `gpu_progress.json` update protocol (including `timings` and `config_snapshot`).
 
 When `--tasks` is NOT present, execute all tasks in task_plan.json (legacy behavior).
 
 ## Tool Usage
+
+**Local mode** (SSH server = "local"):
+- Use `Bash` for all execution — do NOT use SSH MCP tools
+- Use `Write` and `Read` for file I/O
+
+**Remote mode** (SSH server = actual server name):
 - Use `mcp__ssh-mcp-server__execute-command` for remote execution
 - Use `mcp__ssh-mcp-server__upload` to transfer scripts
 - Use `mcp__ssh-mcp-server__download` to retrieve results

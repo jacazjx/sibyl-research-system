@@ -51,159 +51,44 @@ LOOP:
        export SIBYL_LANGUAGE=<action.language>  (默认 "zh")
        这控制 agent prompt 的语言版本。
 
-  2. 根据 action_type 执行:
+  2. 执行 action:
 
-     "skill": 使用 Skill 工具调用对应的 sibyl skill。
-     "skills_parallel": 并行调用 action.skills 列表中的所有 skill。
-       使用 Agent 工具并行启动多个 subagent，每个调用对应的 Skill。
-       等待所有 subagent 完成后继续。
-       注意：实验阶段的 action 可能包含 estimated_minutes 字段，
-       表示预计运行时间（分钟）。如果 >0，各 subagent 应据此设置
-       SSH 超时和轮询间隔，避免过早超时或过度轮询浪费 token。
-       实验完成后，编排器会自动检查是否有剩余任务并循环执行下一批。
+     **首选: 读取 execution_script 按指令执行**
+     cli_next() 返回的 JSON 包含 `execution_script` 字段——预编译的精简执行指令。
+     如果 execution_script 非空，直接按其中的步骤机械执行即可，无需解读 action_type。
+     execution_script 已包含: 需要调用的工具名+参数、完成后的 cli_record 命令、错误处理说明。
 
-       **实验监控与动态调度（experiment_monitor）：**
-       如果 `skill` / `skills_parallel` / `experiment_wait` action 包含 experiment_monitor 字段，在启动实验 skill 的同时：
-       - **立即**用 Agent tool (`run_in_background=true`) 启动 `experiment_monitor.background_agent`
-       - 该后台 supervisor 负责刷新 GPU 空闲状态、派发排队任务、以及发现运行时间/状态漂移后的干预
-       - 主系统必须把 `experiment_monitor.wake_cmd` 当作高优先级 inbox：后台 supervisor 会把“重大结果”或“需要主系统参与”的事项主动投递到这里
-       - 不要等待它完成；主循环继续按下面的 experiment_wait / 状态面板协议工作
+     **Fallback: execution_script 为空时，按 action_type 手动分发**
+     仅在 execution_script 为空或执行失败时，才回退到以下 action_type 分发逻辑。
 
-       **监控轮询循环（SSH MCP 模式）：**
-       ```
-       WHILE true:
-         1. 不要整段傻睡；按 `min(experiment_monitor.wake_check_interval_sec, experiment_monitor.poll_interval_sec)` 分段 sleep
-            每段 sleep 结束先调用 `experiment_monitor.wake_cmd`
-            如果返回 `wake_requested=true`：
-              - 立即停止等待，先处理 events
-              - 若任一 event.requires_main_system=true 或 kind=needs_main_system，主系统必须立刻介入，不要等到下一轮大轮询
-         2. 用 SSH MCP execute-command 执行 check_cmd，解析 task_id:DONE/PENDING
-         3. **打印状态面板（每次轮询必须执行）：**
-            调用 cli_experiment_status 获取状态 JSON:
-            .venv/bin/python3 -c "from sibyl.orchestrate import cli_experiment_status; cli_experiment_status('WORKSPACE_PATH')"
-            从返回的 JSON 中提取 display 字段的值，然后**直接用文本消息输出给用户**（不要通过 Bash print，Bash 输出会被 UI 折叠）。
-            示例：拿到 result 后，直接在对话中输出 result.display 的内容。
+     **实验监控与动态调度（experiment_monitor）：**
+     如果 action 包含 experiment_monitor 字段：
+     - **PostToolUse hook 自动处理**: `on-bash-complete.sh` 检测 cli_next 输出，自动启动 bash 监控 daemon
+     - **仅当 `experiment_monitor.background_agent` 存在时**，才手动启动后台 supervisor
+     - 主系统把 `experiment_monitor.wake_cmd` 当作高优先级 inbox
 
-         4. 读取 marker_file 检查状态:
-            - status="all_complete": 所有任务完成，跳出循环
-            - status="timeout": 监控超时，增大轮询间隔后继续轮询（不暂停）
-            - dispatch_needed=true: 有任务刚完成，GPU 释放
+     **action_type 参考（fallback 时使用）：**
+     - “skill”: Skill tool 调用 action.skills[0]
+     - “skills_parallel”: 并行 Agent 各调用一个 Skill
+     - “team”: TeamCreate → TaskCreate×N → Agent×N → post_steps
+     - “agents_parallel”: 遗留格式（cross-critique），依次执行 action.agents
+     - “bash”: Bash tool 执行 bash_command
+     - “experiment_wait”: 持续轮询直到实验完成（绝不暂停），自适应间隔
+     - “gpu_poll”: 执行 gpu_poll.script 轮询空闲 GPU（永不放弃）
+     - “done”: 输出 SIBYL_PIPELINE_COMPLETE，检查质量门
+     - “stopped”: 用户 /stop 后的停机状态，需 cli_resume 后 cli_next
 
-         5. **动态调度（dispatch_needed=true 时）：**
-            a. 调用 cli_dispatch_tasks 获取新任务:
-               .venv/bin/python3 -c "from sibyl.orchestrate import cli_dispatch_tasks; cli_dispatch_tasks('WORKSPACE_PATH')"
-            b. 如果返回 dispatch 非空:
-               - 为每个 skill 启动新的 Agent（run_in_background）
-               - 更新 check_cmd 加入新 task_ids
-               - 输出: "动态调度: task_X -> GPU[Y]"
-            c. 如果 dispatch 为空（no_ready_tasks/no_free_gpus）: 继续等待
-       ```
-
-       **Bash 直连模式（备选）：**
-       1. 将 experiment_monitor.script 写入 /tmp/sibyl_exp_monitor.sh
-       2. 使用 Bash 工具后台执行: `bash /tmp/sibyl_exp_monitor.sh &`（run_in_background）
-       3. 监控脚本定期 SSH 检查 DONE 标记文件，进度写入 marker_file
-       4. 主 session 定期读取 marker_file，dispatch_needed=true 时调用 cli_dispatch_tasks
-       5. 每次读取 marker_file 后调用 cli_experiment_status 打印状态面板
-     "agents_parallel": 遗留格式（cross-critique 仍用此方式）。
-       依次执行 action.agents 列表中的各 agent 任务。
-     "team": 使用 Agent Team 进行结构化多 agent 协作讨论。
-       前置条件：需要环境变量 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-       action.team 包含结构化字段：team_name, teammates[], post_steps[], prompt
-       1. TeamCreate(team_name=action.team.team_name)
-       2. 遍历 action.team.teammates，为每个 teammate:
-          a. TaskCreate(
-               subject=teammate.name,
-               description="调用 Skill /teammate.skill teammate.args"
-             )
-          b. 记住返回的 taskId
-       3. 并行启动所有 teammates（使用 Agent 工具）:
-          对每个 teammate:
-            - team_name: action.team.team_name
-            - name: teammate.name
-            - subagent_type: "general-purpose"（需要完整工具访问）
-            - prompt: "你是 {teammate.name}，请查看 TaskList 找到分配给你的任务，
-                       用 TaskUpdate(status='in_progress') 标记开始，
-                       然后按 description 中的指令执行 Skill，
-                       完成后 TaskUpdate(status='completed')"
-       4. 由 Lead（当前 session）为每个 teammate 分配任务:
-          TaskUpdate(taskId=对应taskId, owner=teammate.name)
-          注意：Lead 主动分配，而非让 teammate 自行认领
-       5. 等待所有 teammates 完成:
-          teammate 完成任务后会自动发送 idle 通知到 lead，无需轮询。
-          当所有 teammate 都 idle 且 TaskList 显示全部 completed 时继续。
-       6. 逐一关闭各 teammate:
-          SendMessage(type="shutdown_request", recipient=teammate.name,
-                      content="任务完成，请关闭")
-          teammate 收到后用 SendMessage(type="shutdown_response", approve=true) 回复
-       7. 顺序执行 action.team.post_steps（如有）:
-          - type="skill": 使用 Skill 工具调用（如 sibyl-synthesizer）
-          - type="codex": 使用 Skill 工具调用 sibyl-codex-reviewer
-       8. 收集 teammates 和 post_steps 写入的产出文件
-     "bash": 执行 bash_command。
-     "experiment_wait": 实验已在远程运行，定期轮询直到完成。
-       **绝对不要暂停项目**，必须持续轮询直到所有任务完成。
-       ```
-       WHILE true:
-         1. 不要一次 sleep 到下个大轮询点；按 `experiment_monitor.wake_check_interval_sec` 分段 sleep
-            每段 sleep 结束后先执行:
-            .venv/bin/python3 -c "from sibyl.orchestrate import cli_experiment_supervisor_drain_wake; cli_experiment_supervisor_drain_wake('WORKSPACE_PATH')"
-            如果返回 `wake_requested: true`：
-              - 立即读取 events
-              - 如果事件表示“已解决关键问题”或“需要主系统参与”，立刻跳出等待分支处理，不要拖到下一个 2/5/10 分钟轮询
-         2. 用 SSH MCP execute-command 执行 check_cmd，解析 task_id:DONE/PENDING
-         3. **打印状态面板（每次轮询必须执行）：**
-            调用 cli_experiment_status:
-            .venv/bin/python3 -c "from sibyl.orchestrate import cli_experiment_status; cli_experiment_status('WORKSPACE_PATH')"
-            从返回的 JSON 中提取 display 字段，**直接用文本消息输出给用户**
-         4. 检查轮询结果：
-            - 所有 task_id 都是 DONE: 执行步骤 7 同步状态，然后跳出循环继续 cli_record
-            - 有 DONE + 有 PENDING: 输出 "部分完成"，执行步骤 5 动态调度
-            - 全部 PENDING: 继续等待
-         5. **动态调度（有任务刚完成时）：**
-            调用 cli_dispatch_tasks 获取新任务:
-            .venv/bin/python3 -c "from sibyl.orchestrate import cli_dispatch_tasks; cli_dispatch_tasks('WORKSPACE_PATH')"
-            如果返回 dispatch 非空，为每个 skill 启动新 Agent（run_in_background）
-         6. 可选：用 pid_check_cmd 检查进程存活，用 progress_check_cmd 查看详细进度
-            如果后台 supervisor 已经在 events 里提供诊断/已做动作/建议下一步，优先复用，不要重复排查同一问题
-         7. **同步实验状态（跳出循环前必须执行）：**
-            生成 SSH 检测脚本并执行恢复，确保 experiment_state.json 与远程状态一致：
-            a. 生成检测脚本:
-               .venv/bin/python3 -c "from sibyl.orchestrate import cli_recover_experiments; cli_recover_experiments('WORKSPACE_PATH')"
-               → 返回 JSON 含 script 字段
-            b. 用 SSH MCP execute-command 执行该 script，获取 ssh_output
-            c. 应用检测结果:
-               .venv/bin/python3 -c "from sibyl.orchestrate import cli_apply_recovery; cli_apply_recovery('WORKSPACE_PATH', '''SSH_OUTPUT''')"
-            这一步确保 _natural_next_stage 检测到所有任务已完成，正确推进到下一阶段。
-       ```
-       **轮询间隔是自适应的**（由 orchestrator 根据预计剩余时间计算）：
-       - 剩余 ≤30min: 每 2min
-       - 剩余 30-120min: 每 5min
-       - 剩余 >120min: 每 10min
-       注意：轮询等待期间使用 sleep 而非 LLM 推理，不消耗 token。
-     "gpu_poll": GPU 轮询等待（所有 GPU 被占用）。
-       按 CLAUDE.md 中的 GPU 轮询协议执行，每次轮询时输出状态提示：
-       ```
-       +-----------------------------------------+
-       |      SIBYL - Waiting for GPUs            |
-       +-----------------------------------------+
-       |  Poll #{N}: No free GPUs available
-       |  Threshold: <threshold>MB free VRAM
-       |  Checking every <interval>min via SSH
-       |  System running, please wait...
-       +-----------------------------------------+
-       ```
-       **永不放弃**: 持续轮询直到有空闲 GPU，忽略 max_attempts 上限。
-       每 10 轮输出一次日志避免 token 浪费。
-     "done": 单轮迭代完成。
-       1. 输出 <promise>SIBYL_PIPELINE_COMPLETE</promise>
-       2. 检查 quality_gate 分数是否达标
-       3. 如果未达标或有改进空间，自动开始下一轮迭代（cli_next 会处理）
-       4. 如果已达到最高质量，开始探索新的研究方向或改进现有结果
-     "stopped": 项目曾被用户显式 `/stop`。
-       1. 当前命令若是用户主动触发的 `/continue` 或 `/resume`，先调用 `cli_resume`
-       2. 再重新调用 `cli_next` 继续执行
-       3. Sentinel 不应对 `stopped` 项目自动拉起
+     **experiment_wait 轮询协议（无论 execution_script 还是 fallback 都遵循）：**
+     ```
+     WHILE true:
+       1. 按 wake_check_interval_sec 分段 sleep，每段结束检查 wake_cmd
+          wake_requested=true 且 requires_main_system=true → 立即介入
+       2. SSH check_cmd → 解析 task_id:DONE/PENDING
+       3. cli_experiment_status → 直接输出 display 字段（不用 Bash echo）
+       4. 读 marker_file: all_complete→同步状态后 break, dispatch_needed→调度
+       5. 动态调度: cli_dispatch_tasks → 启动新 Agent(run_in_background)
+       6. 跳出前必须: cli_recover_experiments → SSH 执行 → cli_apply_recovery
+     ```
 
   错误处理（铁律：永不停机）:
      遇到错误必须自主解决，系统不能停下来！
@@ -239,7 +124,7 @@ LOOP:
         - 格式: ## [STAGE] YYYY-MM-DD HH:MM\n<汇总内容>\n
 
      c. 飞书后台同步（Hook 自动触发，无需手动处理）:
-        - **已由 PostToolUse hook 自动处理**: `.claude/hooks/lark-sync-trigger.sh`
+        - **由 PostToolUse hook 自动处理**: `plugin/hooks/scripts/on-bash-complete.sh`
           监听 cli_record 的 Bash 调用，检测 `sync_requested: true` 后注入上下文
         - 当你看到 `[LARK-SYNC-HOOK]` 上下文提示时，按提示启动后台 Agent:
           使用 Agent tool（run_in_background=true）调用 Skill `sibyl-lark-sync`，参数为 WORKSPACE_PATH
@@ -247,9 +132,7 @@ LOOP:
         - 触发日志: `WORKSPACE_PATH/lark_sync/pending_sync.jsonl`
         - 同步结果: `WORKSPACE_PATH/lark_sync/sync_status.json`
         - 手动触发: `/sibyl-research:sync {project}`
-        - 如果会话是在 `/sibyl-research:resume` 或 `/sibyl-research:continue` 后恢复，
-          也要检查 `pending_sync.jsonl`；只要还有未消费条目，就先把 `sibyl-lark-sync`
-          后台 agent 重新拉起来，再继续主循环
+        - SessionStart hook 会在会话启动时自动检测 pending sync 并通过系统消息提醒
 
      d. 压缩上下文:
         - 执行 /compact 压缩当前会话上下文

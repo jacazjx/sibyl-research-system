@@ -12,21 +12,27 @@ Analyze the experiment results:
 - Read `{workspace}/idea/proposal.md`
 - Read `{workspace}/context/literature.md`
 
-Provide:
-1. SOTA comparison: how do results compare to published state-of-the-art on the same benchmarks?
-2. Contribution margin: what is the actual delta over existing methods? Is it meaningful?
-3. Concurrent work check: search for recent papers that may have addressed the same problem
-4. Novelty assessment: given what exists, is this still a novel contribution?
-5. Publication readiness: which venue (if any) would accept these results as-is?
-6. What additional baselines or comparisons would strengthen the paper?
+## Reasoning Steps (follow in order)
 
-## 文献搜索（必做）
+1. **Baseline landscape**: Build a comparison table of the top 3-5 existing methods on the same benchmarks. Include exact published numbers (from literature.md or fresh search). If numbers are unavailable, flag it.
+2. **Contribution margin**: Compute the exact delta between our results and each baseline. Classify: >5% = strong, 1-5% = moderate, <1% = marginal. Be honest — marginal gains on a well-studied benchmark may not constitute a publishable contribution.
+3. **Concurrent work scan**: Search arXiv and Google Scholar for papers from the last 6 months addressing the same problem. If a concurrent paper already achieves similar or better results, this fundamentally changes the contribution story.
+4. **Novelty verdict**: Given what exists, answer: "What is the ONE thing this work does that no prior work does?" If you cannot articulate it in one sentence, the novelty is questionable.
+5. **Venue recommendation**: Based on contribution margin + novelty, recommend a specific venue tier (top-tier: NeurIPS/ICML/ICLR, mid-tier: AAAI/EMNLP, workshop, or "insufficient for submission"). Justify with comparable papers at that venue.
+6. **Strengthening plan**: List 2-3 specific additional baselines or comparisons that would maximally strengthen the paper's positioning.
 
-你**必须**搜索最新文献来定位结果：
+### Anti-Patterns (avoid)
+- Comparing against stale baselines (>2 years old) while ignoring recent SOTA
+- Claiming novelty without verifying against concurrent work
+- Recommending top-tier venue for marginal improvements
 
-1. **arXiv 搜索**（`mcp__arxiv-mcp-server__search_papers`）：搜索与本实验直接相关的最新论文，至少 2 次搜索
-2. **Google Scholar**（`mcp__google-scholar__search_google_scholar_key_words`）：搜索 benchmark 上的 SOTA 结果
-3. **Web 搜索**（`WebSearch`）：搜索 leaderboard 和最新竞争方法
+## Literature Search (REQUIRED)
+
+You MUST search recent literature to position the results:
+
+1. **arXiv search** (`mcp__arxiv-mcp-server__search_papers`): Search for papers directly related to this experiment — at least 2 searches
+2. **Google Scholar** (`mcp__google-scholar__search_google_scholar_key_words`): Search for SOTA results on the benchmarks
+3. **Web search** (`WebSearch`): Search for leaderboards and the latest competing methods
 
 ## Output
 Write to `{workspace}/idea/result_debate/comparativist.md`

@@ -48,6 +48,7 @@ model: <override model>
 - 提供具体的改进建议（不是泛泛而谈）
 - 打分 1-10 并给出理由
 - `review` 模式下对论文相关评审使用英文；其他模式遵循当前控制面语言
+- **`idea_debate` 模式下必须输出机器可解析的裁决**：评审结束后，最后一行必须严格写 `VERDICT: APPROVE` 或 `VERDICT: REVISE`。APPROVE 表示 idea 质量足以推进到实验阶段；REVISE 表示存在重大问题需要迭代修正
 
 ### 3. 保存结果
 
@@ -67,7 +68,11 @@ model: <override model>
 ## 评分
 
 {score}/10
+
+VERDICT: APPROVE
 ```
+
+**CRITICAL**: 对于 `idea_debate` 模式，最后一行必须严格是 `VERDICT: APPROVE` 或 `VERDICT: REVISE`。编排器会解析此行来决定是否触发 idea 迭代循环。
 
 ### 4. 错误处理
 
