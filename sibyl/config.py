@@ -83,6 +83,10 @@ class Config:
     writing_mode: str = "parallel"  # "sequential" | "parallel" | "codex"
     codex_writing_model: str = ""  # Codex writing model (empty = use default)
 
+    # Speculative outline: run outline-writer in parallel with experiment_decision.
+    # If PROCEED, skip writing_outline stage. If PIVOT, outline is discarded.
+    speculative_outline: bool = True
+
     # Experiment execution
     experiment_mode: str = "ssh_mcp"  # "ssh_mcp" | "server_codex" | "server_claude"
     server_codex_path: str = "codex"  # Codex CLI path on server

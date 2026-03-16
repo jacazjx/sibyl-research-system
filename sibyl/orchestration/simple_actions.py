@@ -59,11 +59,29 @@ def build_idea_validation_decision_action(
 
 
 def build_experiment_decision_action(
+    orchestrator: Any,
     ws: str,
     *,
     action_cls: type[Any],
 ) -> Any:
-    """Build the post-experiment supervisor decision action."""
+    """Build the post-experiment supervisor decision action.
+
+    When speculative_outline is enabled (default True), the outline writer runs
+    in parallel with the supervisor decision.  If the supervisor decides PROCEED
+    and an outline already exists, the pipeline can skip writing_outline entirely.
+    If the supervisor decides PIVOT, the speculative outline is simply ignored.
+    """
+    speculative = getattr(orchestrator.config, "speculative_outline", True)
+    if speculative:
+        return action_cls(
+            action_type="skills_parallel",
+            skills=[
+                {"name": "sibyl-supervisor-decision", "args": ws},
+                {"name": "sibyl-outline-writer", "args": ws},
+            ],
+            description="Supervisor decision + speculative outline (parallel)",
+            stage="experiment_decision",
+        )
     return action_cls(
         action_type="skill",
         skills=[{"name": "sibyl-supervisor-decision", "args": ws}],
@@ -87,16 +105,89 @@ def build_writing_outline_action(
 
 
 def build_writing_integrate_action(
+    orchestrator: Any,
     ws: str,
     *,
     action_cls: type[Any],
 ) -> Any:
-    """Build the paper integration action."""
+    """Build the combined critique + integrate team action.
+
+    Merges the former ``writing_critique`` stage (6 section-critics in parallel)
+    with the ``writing_integrate`` editor into a single team action.  The critics
+    run as teammates and the editor executes as a post_step after all critics finish.
+    """
+    from .checkpointing import get_or_create_checkpoint
+    from .common_utils import pack_skill_args, paper_writing_requirement
+    from .constants import PAPER_SECTIONS
+    from .prompt_loader import render_team_prompt
+
+    steps = {sid: f"writing/critique/{sid}_critique.md" for sid, _ in PAPER_SECTIONS}
+    cp_info = get_or_create_checkpoint(orchestrator, "writing_integrate", steps)
+
+    if cp_info and cp_info["all_complete"]:
+        # All critiques done — only the editor post_step remains.
+        return action_cls(
+            action_type="skill",
+            skills=[{"name": "sibyl-editor", "args": ws}],
+            description="所有批评已完成（checkpoint 校验通过），直接执行编辑整合",
+            stage="writing_integrate",
+            checkpoint_info=cp_info,
+        )
+
+    remaining = set(cp_info["remaining_steps"]) if cp_info else None
+    sections_info = "\n".join(
+        f"- Critic for {name}: read {ws}/writing/sections/{sid}.md, "
+        f"write critique to {ws}/writing/critique/{sid}_critique.md"
+        for sid, name in PAPER_SECTIONS
+        if remaining is None or sid in remaining
+    )
+    team_instructions = (
+        f"Spawn teammates for remaining critiques:\n{sections_info}\n\n"
+        f"**Cross-section referencing**: Each critic MUST read related sections for consistency checking. "
+        f"All sections are in {ws}/writing/sections/. "
+        f"Notation reference: {ws}/writing/notation.md. "
+        f"Glossary reference: {ws}/writing/glossary.md.\n\n"
+        f"Score each section 1-10 and provide specific improvement suggestions.\n"
+        f"{paper_writing_requirement()}\n\n"
+        f"After all critics finish, the editor will integrate all sections and critiques "
+        f"into a coherent paper."
+    )
+    team_prompt = render_team_prompt(
+        "Parallel section critique + integration",
+        team_instructions,
+        workspace_path=ws,
+        language=orchestrator.config.language,
+        paper_output=True,
+    )
+    teammates = [
+        {
+            "name": f"critic-{sid}",
+            "skill": "sibyl-section-critic",
+            "args": pack_skill_args(ws, name, sid),
+        }
+        for sid, name in PAPER_SECTIONS
+        if remaining is None or sid in remaining
+    ]
+    post_steps = [
+        {"type": "skill", "skill": "sibyl-editor", "args": ws},
+    ]
+
     return action_cls(
-        action_type="skill",
-        skills=[{"name": "sibyl-editor", "args": ws}],
-        description="Integrate all sections into coherent paper",
+        action_type="team",
+        team={
+            "team_name": "sibyl-writing-integrate",
+            "teammates": teammates,
+            "post_steps": post_steps,
+            "prompt": team_prompt,
+        },
+        description=f"Agent Team: {len(teammates)}人并行批评 → 编辑整合"
+        + (
+            f"（恢复：已完成 {len(cp_info['completed_steps'])}/6）"
+            if cp_info and cp_info["resuming"]
+            else ""
+        ),
         stage="writing_integrate",
+        checkpoint_info=cp_info,
     )
 
 
@@ -217,9 +308,20 @@ def build_quality_gate_action(
             stage="done",
         )
 
+    summary_parts = [
+        f"score={score:.1f}",
+        f"threshold={threshold:.1f}",
+        f"iter={iteration}/{max_iters}",
+        f"decision=CONTINUE (score < threshold)",
+    ]
+    if trajectory:
+        summary_parts.append(f"trajectory={trajectory}")
+    if focus:
+        summary_parts.append(f"next_focus={focus}")
+    summary_line = " | ".join(summary_parts)
     return action_cls(
         action_type="bash",
-        bash_command=f"echo 'Starting iteration {iteration + 1}'",
+        bash_command=f"echo 'Quality Gate: {summary_line}'",
         description=(
             f"Quality gate: score={score} < {threshold}, "
             f"starting iteration {iteration + 1}{extra}"

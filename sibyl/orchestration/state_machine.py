@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .review_artifacts import extract_supervisor_score
-from .constants import CHECKPOINT_DIRS
+from .constants import CHECKPOINT_DIRS, CHECKPOINT_DIRS_COMPAT
 from .prompt_loader import _load_workspace_action_plan
 from .workspace_paths import project_marker_file
 
@@ -84,6 +84,11 @@ def natural_next_stage(
                 "PIVOT requested but cycle limit reached "
                 f"({cycle}/{orchestrator.config.idea_exp_cycles})"
             )
+        else:
+            # PROCEED path — check if speculative outline already written
+            outline_path = orchestrator.ws.active_path("writing/outline.md")
+            if outline_path.exists() and outline_path.stat().st_size > 0:
+                return ("writing_sections", None)
 
     if current_stage == "idea_validation_decision":
         payload = load_idea_validation_decision(orchestrator)
@@ -125,13 +130,12 @@ def natural_next_stage(
         return ("experiment_cycle", None)
 
     if current_stage in ("pilot_experiments", "experiment_cycle"):
-        from sibyl.gpu_scheduler import get_batch_info, get_running_gpu_ids
+        from sibyl.gpu_scheduler import has_pending_tasks, get_running_gpu_ids
         from sibyl.experiment_recovery import (
             get_running_tasks as get_exp_running,
             load_experiment_state,
         )
 
-        exp_mode = "PILOT" if current_stage == "pilot_experiments" else "FULL"
         exp_state = load_experiment_state(orchestrator.ws.active_root)
         exp_running = get_exp_running(exp_state)
         if exp_running:
@@ -139,13 +143,8 @@ def natural_next_stage(
         running_gpus = get_running_gpu_ids(orchestrator.ws.active_root)
         if running_gpus:
             return (current_stage, None)
-        info = get_batch_info(
-            orchestrator.ws.active_root,
-            list(range(orchestrator.config.max_gpus)),
-            exp_mode,
-            gpus_per_task=orchestrator.config.gpus_per_task,
-        )
-        if info is not None and len(info["batch"]) > 0:
+        # Lightweight check: skip heavy topo-sort / GPU assignment
+        if has_pending_tasks(orchestrator.ws.active_root):
             return (current_stage, None)
 
     if current_stage == "writing_final_review":
@@ -304,7 +303,8 @@ def clear_iteration_artifacts(orchestrator: Any, iteration: int = 0) -> None:
             except OSError:
                 pass
 
-    for cp_dir in CHECKPOINT_DIRS.values():
+    all_cp_dirs = set(CHECKPOINT_DIRS.values()) | set(CHECKPOINT_DIRS_COMPAT.values())
+    for cp_dir in all_cp_dirs:
         orchestrator.ws.clear_checkpoint(cp_dir)
 
     if lessons_content:

@@ -9,9 +9,7 @@ from typing import Any
 
 from .action_dispatcher import render_execution_script
 from .agent_helpers import resolve_model_tier
-
-
-_NO_SYNC_TRIGGER = {"init", "quality_gate", "done", "lark_sync"}
+from .constants import SYNC_SKIP_STAGES
 
 
 def get_next_action(orchestrator: Any, *, action_cls: type[Any]) -> dict:
@@ -111,7 +109,7 @@ def record_result(
     score_str = f" (score={score})" if score is not None else ""
     orchestrator.ws.git_commit(f"sibyl: complete {stage}{score_str}")
 
-    if orchestrator.config.lark_enabled and stage not in _NO_SYNC_TRIGGER:
+    if orchestrator.config.lark_enabled and stage not in SYNC_SKIP_STAGES:
         append_pending_sync(orchestrator, stage)
 
-    return {"sync_requested": orchestrator.config.lark_enabled and stage not in _NO_SYNC_TRIGGER}
+    return {"sync_requested": orchestrator.config.lark_enabled and stage not in SYNC_SKIP_STAGES}

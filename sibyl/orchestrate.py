@@ -212,6 +212,9 @@ class FarsOrchestrator:
         if stage in ("critic_review", "supervisor_review"):
             stage = "review"
             self.ws.update_stage("review")
+        elif stage == "writing_critique":
+            stage = "writing_integrate"
+            self.ws.update_stage("writing_integrate")
 
         if stage == "init":
             # init is a transient stage; the real research work starts at
@@ -234,7 +237,7 @@ class FarsOrchestrator:
             "experiment_decision": lambda: self._action_experiment_decision(ws),
             "writing_outline": lambda: self._action_writing_outline(ws),
             "writing_sections": lambda: self._action_writing_sections(ws),
-            "writing_critique": lambda: self._action_writing_critique(ws),
+            "writing_critique": lambda: self._action_writing_integrate(ws),  # compat alias
             "writing_integrate": lambda: self._action_writing_integrate(ws),
             "writing_final_review": lambda: self._action_writing_final_review(ws),
             "writing_latex": lambda: self._action_writing_latex(ws),
@@ -361,6 +364,7 @@ class FarsOrchestrator:
 
     def _action_experiment_decision(self, ws: str) -> Action:
         return _simple_actions.build_experiment_decision_action(
+            self,
             ws,
             action_cls=Action,
         )
@@ -378,15 +382,9 @@ class FarsOrchestrator:
             action_cls=Action,
         )
 
-    def _action_writing_critique(self, ws: str) -> Action:
-        return _team_actions.build_writing_critique_action(
-            self,
-            ws,
-            action_cls=Action,
-        )
-
     def _action_writing_integrate(self, ws: str) -> Action:
         return _simple_actions.build_writing_integrate_action(
+            self,
             ws,
             action_cls=Action,
         )
