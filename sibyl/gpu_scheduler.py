@@ -540,11 +540,11 @@ def get_next_batch(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
     if not tasks or not isinstance(tasks, list):
         return None
 
-    # Load progress (completed + running)
-    completed, running_ids, _, _, _ = _load_progress(workspace_root)
+    # Load progress (completed + running + failed)
+    completed, running_ids, _, _, failed = _load_progress(workspace_root)
 
-    # Filter out completed AND running tasks
-    excluded = completed | running_ids
+    # Filter out completed, running, AND failed tasks
+    excluded = completed | running_ids | failed
     remaining = [t for t in tasks if t["id"] not in excluded]
     if not remaining:
         # Check if there are running tasks (not truly done yet)
@@ -552,10 +552,11 @@ def get_next_batch(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
             return []  # Still running, nothing new to schedule
         return None  # All done
 
-    # Find ready tasks (all deps completed, not already running)
+    # Treat failed as resolved for dependency purposes (don't block downstream)
+    resolved = completed | failed
     ready = [
         t for t in remaining
-        if all(dep in completed for dep in t.get("depends_on", []))
+        if all(dep in resolved for dep in t.get("depends_on", []))
     ]
 
     if not ready:
@@ -591,11 +592,11 @@ def get_batch_info(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
     if not tasks or not isinstance(tasks, list):
         return None
 
-    # Load progress (completed + running)
-    completed, running_ids, _, timings, _ = _load_progress(workspace_root)
+    # Load progress (completed + running + failed)
+    completed, running_ids, _, timings, failed = _load_progress(workspace_root)
 
-    # Filter out completed AND running tasks
-    excluded = completed | running_ids
+    # Filter out completed, running, AND failed tasks
+    excluded = completed | running_ids | failed
     remaining = [t for t in tasks if t["id"] not in excluded]
     if not remaining:
         if running_ids:
@@ -605,9 +606,11 @@ def get_batch_info(workspace_root: Path, gpu_ids: list[int], mode: str = "PILOT"
                     "total_count": len(tasks)}
         return None
 
+    # Treat failed tasks as "resolved" for dependency purposes (don't block downstream)
+    resolved = completed | failed
     ready = [
         t for t in remaining
-        if all(dep in completed for dep in t.get("depends_on", []))
+        if all(dep in resolved for dep in t.get("depends_on", []))
     ]
 
     if not ready:

@@ -1184,6 +1184,67 @@ class TestMonitorScriptDispatchNeeded:
 
 
 # ══════════════════════════════════════════════
+# Failed tasks don't block pipeline
+# ══════════════════════════════════════════════
+
+def test_get_batch_info_excludes_failed_tasks(tmp_path):
+    """Failed tasks should be excluded from pending, not block the pipeline."""
+    ws = tmp_path / "ws"
+    (ws / "exp").mkdir(parents=True)
+    (ws / "plan").mkdir(parents=True)
+    plan = {"tasks": [
+        {"id": "a", "gpu_count": 1, "estimated_minutes": 5, "depends_on": []},
+        {"id": "b", "gpu_count": 1, "estimated_minutes": 5, "depends_on": []},
+    ]}
+    (ws / "plan" / "task_plan.json").write_text(json.dumps(plan))
+    progress = {"completed": [], "failed": ["a"], "running": {}, "timings": {}}
+    (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+    info = get_batch_info(ws, [0, 1], "FULL")
+    # a=failed (excluded), b=ready → should get batch with b
+    assert info is not None
+    assert len(info["batch"]) == 1
+    assert info["batch"][0]["task_ids"] == ["b"]
+
+
+def test_failed_dependency_unblocks_downstream(tmp_path):
+    """If a dependency failed, downstream tasks should still be able to proceed."""
+    ws = tmp_path / "ws"
+    (ws / "exp").mkdir(parents=True)
+    (ws / "plan").mkdir(parents=True)
+    plan = {"tasks": [
+        {"id": "a", "gpu_count": 1, "estimated_minutes": 5, "depends_on": []},
+        {"id": "b", "gpu_count": 1, "estimated_minutes": 5, "depends_on": ["a"]},
+    ]}
+    (ws / "plan" / "task_plan.json").write_text(json.dumps(plan))
+    progress = {"completed": [], "failed": ["a"], "running": {}, "timings": {}}
+    (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+    info = get_batch_info(ws, [0], "FULL")
+    assert info is not None
+    assert len(info["batch"]) == 1
+    assert info["batch"][0]["task_ids"] == ["b"]
+
+
+def test_get_next_batch_excludes_failed(tmp_path):
+    """get_next_batch should also skip failed tasks."""
+    ws = tmp_path / "ws"
+    (ws / "exp").mkdir(parents=True)
+    (ws / "plan").mkdir(parents=True)
+    plan = {"tasks": [
+        {"id": "a", "gpu_count": 1, "estimated_minutes": 5, "depends_on": []},
+        {"id": "b", "gpu_count": 1, "estimated_minutes": 5, "depends_on": []},
+    ]}
+    (ws / "plan" / "task_plan.json").write_text(json.dumps(plan))
+    progress = {"completed": [], "failed": ["a"], "running": {}, "timings": {}}
+    (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+    batch = get_next_batch(ws, [0, 1])
+    assert len(batch) == 1
+    assert batch[0]["task_ids"] == ["b"]
+
+
+# ══════════════════════════════════════════════
 # remaining_count includes running tasks
 # ══════════════════════════════════════════════
 
