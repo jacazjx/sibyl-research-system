@@ -74,12 +74,17 @@ Sibyl relies on several MCP servers. `setup.sh` configures the required ones aut
 - [arXiv MCP](https://github.com/blazickjp/arxiv-mcp-server) — literature search (`pip install arxiv-mcp-server`)
 
 **Recommended:**
-- [Google Scholar MCP](https://github.com/JackKuo666/Google-Scholar-MCP-Server) — academic search
+- [Google Scholar MCP](https://github.com/JackKuo666/Google-Scholar-MCP-Server) — academic search (used by 10+ agents):
+  ```bash
+  git clone https://github.com/JackKuo666/Google-Scholar-MCP-Server.git ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
+  .venv/bin/pip install -r ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/requirements.txt
+  claude mcp add --scope local google-scholar -- .venv/bin/python3 ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py
+  ```
 - [Codex MCP](https://github.com/openai/codex) — GPT-5.4 independent cross-review (enable with `codex_enabled: true` after installation)
 
 **Optional:**
 - [Lark](https://github.com/larksuite/lark-openapi-mcp)/[Feishu](https://github.com/cso1z/Feishu-MCP) MCP — cloud document sync
-- [bioRxiv MCP](https://github.com/JackKuo666/bioRxiv-MCP-Server) — biology preprints
+- [bioRxiv MCP](https://github.com/JackKuo666/bioRxiv-MCP-Server) — biology preprints (`.venv/bin/pip install biorxiv-mcp-server`)
 - [Playwright MCP](https://github.com/microsoft/playwright-mcp) — web browsing
 
 ### GPU Server Setup

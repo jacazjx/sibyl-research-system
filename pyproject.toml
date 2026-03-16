@@ -10,6 +10,12 @@ dependencies = [
     "gunicorn>=22.0",
 ]
 
+[project.optional-dependencies]
+lark = [
+    "lark-oapi>=1.0.0",
+    "mistune>=3.0",
+]
+
 [project.scripts]
 sibyl = "sibyl.cli:main"
 

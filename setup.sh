@@ -119,7 +119,17 @@ pip install -e . 2>&1 | tail -3
 # ---------- MCP servers (Python-based) ----------
 echo ""
 echo "Installing Python MCP servers..."
-pip install arxiv-mcp-server 2>/dev/null && echo "  ✓ arxiv-mcp-server" || echo "  ✗ arxiv-mcp-server (install manually: pip install arxiv-mcp-server)"
+pip install arxiv-mcp-server 2>/dev/null && echo "  ✓ arxiv-mcp-server" || echo "  ✗ arxiv-mcp-server (install manually: .venv/bin/pip install arxiv-mcp-server)"
+
+# ---------- tmux check ----------
+echo ""
+if command -v tmux &>/dev/null; then
+    TMUX_VER=$(tmux -V 2>/dev/null || echo "unknown")
+    echo "tmux detected ($TMUX_VER) — good for persistent sessions + Sentinel auto-recovery"
+else
+    echo "⚠  tmux not found. Strongly recommended for persistent sessions and Sentinel watchdog."
+    echo "   Install: brew install tmux (macOS) / apt install tmux (Linux)"
+fi
 
 # ---------- Node.js check ----------
 echo ""
@@ -135,41 +145,71 @@ fi
 
 # ---------- MCP configuration ----------
 echo ""
-MCP_CONFIG="$HOME/.mcp.json"
-if [ -f "$MCP_CONFIG" ]; then
-    echo "~/.mcp.json already exists — skipping MCP auto-config."
-    echo "  This script does not merge existing MCP configs."
-    echo "  Verify it includes 'ssh-mcp-server' and 'arxiv-mcp-server', or add them via:"
-    echo "    claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server ..."
-    echo "    claude mcp add --scope local arxiv-mcp-server -- $VENV_PY -m arxiv_mcp_server"
-    echo "  See docs/mcp-servers.md for reference."
-else
-    echo "Configuring required MCP servers..."
-    echo ""
+echo "Configuring MCP servers..."
 
-    # --- SSH MCP Server ---
-    SSH_HOST=""
-    SSH_PORT="22"
-    SSH_USER=""
-    SSH_KEY="$HOME/.ssh/id_ed25519"
+# Check if claude CLI is available
+HAS_CLAUDE=false
+if command -v claude &>/dev/null; then
+    HAS_CLAUDE=true
+    echo "  Claude Code CLI detected — using 'claude mcp add --scope local' (preferred)"
+fi
 
-    echo "SSH MCP Server (@fangjunjie/ssh-mcp-server) — required for GPU experiments"
-    echo "  GitHub: https://github.com/classfang/ssh-mcp-server"
+# Warn about legacy ~/.mcp.json
+if [ -f "$HOME/.mcp.json" ]; then
     echo ""
-    read -p "  GPU server hostname or IP (e.g., 192.168.1.100): " SSH_HOST
-    if [ -n "$SSH_HOST" ]; then
-        read -p "  SSH port [22]: " input_port
-        SSH_PORT="${input_port:-22}"
-        read -p "  SSH username: " SSH_USER
-        read -p "  SSH private key path [$SSH_KEY]: " input_key
-        SSH_KEY="${input_key:-$SSH_KEY}"
+    echo "  ⚠ Legacy ~/.mcp.json detected."
+    echo "    Consider migrating to 'claude mcp add --scope local' for repo-scoped config."
+    echo "    See docs/mcp-servers.md for details."
+fi
+
+# --- SSH MCP Server ---
+SSH_HOST=""
+SSH_PORT="22"
+SSH_USER=""
+SSH_KEY="$HOME/.ssh/id_ed25519"
+COMPUTE_BACKEND="local"
+
+echo ""
+echo "SSH MCP Server (@fangjunjie/ssh-mcp-server) — required for remote GPU experiments"
+echo "  GitHub: https://github.com/classfang/ssh-mcp-server"
+echo "  (Leave empty to skip if using local GPUs only)"
+echo ""
+read -p "  GPU server hostname or IP: " SSH_HOST
+if [ -n "$SSH_HOST" ]; then
+    read -p "  SSH port [22]: " input_port
+    SSH_PORT="${input_port:-22}"
+    read -p "  SSH username: " SSH_USER
+    read -p "  SSH private key path [$SSH_KEY]: " input_key
+    SSH_KEY="${input_key:-$SSH_KEY}"
+    COMPUTE_BACKEND="ssh"
+fi
+
+echo ""
+if [ "$HAS_CLAUDE" = true ]; then
+    # Preferred: use claude mcp add --scope local
+    if [ -n "$SSH_HOST" ] && [ -n "$SSH_USER" ]; then
+        claude mcp add --scope local ssh-mcp-server -- npx -y @fangjunjie/ssh-mcp-server \
+            --host "$SSH_HOST" --port "$SSH_PORT" --username "$SSH_USER" \
+            --privateKey "$SSH_KEY" 2>/dev/null \
+            && echo "  ✓ SSH MCP configured ($SSH_USER@$SSH_HOST:$SSH_PORT)" \
+            || echo "  ✗ SSH MCP failed — run manually: claude mcp add --scope local ssh-mcp-server -- ..."
+    else
+        echo "  ⚠ SSH MCP skipped — configure later if using remote GPUs"
     fi
 
-    echo ""
-    echo "Creating ~/.mcp.json..."
-
-    if [ -n "$SSH_HOST" ] && [ -n "$SSH_USER" ]; then
-        cat > "$MCP_CONFIG" << MCPEOF
+    claude mcp add --scope local arxiv-mcp-server -- "$VENV_PY" -m arxiv_mcp_server 2>/dev/null \
+        && echo "  ✓ arXiv MCP configured" \
+        || echo "  ✗ arXiv MCP failed — run manually: claude mcp add --scope local arxiv-mcp-server -- $VENV_PY -m arxiv_mcp_server"
+else
+    # Fallback: create project-level .mcp.json
+    if [ -f ".mcp.json" ]; then
+        echo "  .mcp.json already exists — skipping MCP auto-config."
+        echo "  Verify it includes 'ssh-mcp-server' and 'arxiv-mcp-server'."
+        echo "  See docs/mcp-servers.md for reference."
+    else
+        echo "  Claude CLI not found — creating project-level .mcp.json"
+        if [ -n "$SSH_HOST" ] && [ -n "$SSH_USER" ]; then
+            cat > .mcp.json << MCPEOF
 {
   "mcpServers": {
     "ssh-mcp-server": {
@@ -188,24 +228,9 @@ else
   }
 }
 MCPEOF
-        echo "  ✓ SSH MCP configured ($SSH_USER@$SSH_HOST:$SSH_PORT)"
-        echo "  ✓ arXiv MCP configured"
-
-        # Also create config.yaml if it doesn't exist
-        if [ ! -f "config.yaml" ]; then
-            cat > config.yaml << CFGEOF
-# Sibyl Research System - Machine-level config (git-ignored)
-ssh_server: "default"
-remote_base: "/home/$SSH_USER/sibyl_system"
-max_gpus: 4
-language: zh
-codex_enabled: false  # Opt in only after Codex MCP + OPENAI_API_KEY are configured
-CFGEOF
-            echo "  ✓ Created config.yaml (edit remote_base/max_gpus as needed)"
-        fi
-    else
-        # SSH skipped — create with arXiv only
-        cat > "$MCP_CONFIG" << MCPEOF
+            echo "  ✓ SSH + arXiv MCP configured in .mcp.json"
+        else
+            cat > .mcp.json << MCPEOF
 {
   "mcpServers": {
     "arxiv-mcp-server": {
@@ -216,24 +241,41 @@ CFGEOF
   }
 }
 MCPEOF
-        echo "  ✓ arXiv MCP configured"
-        echo "  ⚠ SSH MCP skipped — configure manually later. See docs/mcp-servers.md"
+            echo "  ✓ arXiv MCP configured in .mcp.json"
+            echo "  ⚠ SSH MCP skipped — add manually if using remote GPUs"
+        fi
     fi
 fi
 
+# ---------- config.yaml ----------
 if [ ! -f "config.yaml" ]; then
-    cat > config.yaml << CFGEOF
+    if [ "$COMPUTE_BACKEND" = "ssh" ] && [ -n "$SSH_USER" ]; then
+        cat > config.yaml << CFGEOF
 # Sibyl Research System - Machine-level config (git-ignored)
+compute_backend: ssh
 ssh_server: "default"
-remote_base: "/home/user/sibyl_system"
+remote_base: "/home/$SSH_USER/sibyl_system"
 max_gpus: 4
 language: zh
 codex_enabled: false  # Opt in only after Codex MCP + OPENAI_API_KEY are configured
 CFGEOF
-    echo "  ✓ Created config.yaml template (edit ssh_server/remote_base/max_gpus as needed)"
+        echo "  ✓ Created config.yaml (compute_backend: ssh, edit remote_base/max_gpus as needed)"
+    else
+        cat > config.yaml << CFGEOF
+# Sibyl Research System - Machine-level config (git-ignored)
+compute_backend: local
+max_gpus: 4
+language: zh
+codex_enabled: false  # Opt in only after Codex MCP + OPENAI_API_KEY are configured
+# To use remote GPUs, set compute_backend: ssh and configure:
+# ssh_server: "default"
+# remote_base: "/home/user/sibyl_system"
+CFGEOF
+        echo "  ✓ Created config.yaml (compute_backend: local)"
+    fi
 fi
 
-# ---------- Environment variables check ----------
+# ---------- Environment variables ----------
 echo ""
 echo "Checking environment variables..."
 SHELL_RC="$(detect_shell_rc)"
@@ -244,15 +286,21 @@ echo "    SIBYL_ROOT -> $REPO_ROOT"
 if [ -n "$ANTHROPIC_API_KEY" ]; then
     echo "  ✓ ANTHROPIC_API_KEY is set"
 else
-    echo "  ✗ ANTHROPIC_API_KEY not set — add to your ~/.zshrc or ~/.bashrc:"
+    echo "  ✗ ANTHROPIC_API_KEY not set — add to $SHELL_RC:"
     echo "    export ANTHROPIC_API_KEY=\"sk-ant-...\""
 fi
 
 if [ "$CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" = "1" ]; then
     echo "  ✓ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
 else
-    echo "  ✗ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set — add to your ~/.zshrc or ~/.bashrc:"
-    echo "    export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+    # Auto-add to shell rc if not present
+    if grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$SHELL_RC" 2>/dev/null; then
+        echo "  ⚠ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS found in $SHELL_RC but not active in current session"
+        echo "    Run: source $SHELL_RC"
+    else
+        echo 'export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1' >> "$SHELL_RC"
+        echo "  ✓ Added CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 to $SHELL_RC"
+    fi
 fi
 
 # ---------- Summary ----------
@@ -260,14 +308,21 @@ echo ""
 echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
-echo "  1. Set missing environment variables (see above)"
-echo "     Open a new shell or run: source $SHELL_RC"
-echo "  2. Review config.yaml — adjust remote_base/max_gpus for your server"
+echo "  1. Set missing environment variables (see above), then:"
+echo "       source $SHELL_RC"
+echo "  2. Review config.yaml — adjust compute_backend/remote_base/max_gpus as needed"
 echo "     Codex stays disabled by default; enable it only after installing Codex MCP and OPENAI_API_KEY"
-echo "  3. Launch Claude Code with Sibyl plugin:"
+echo "  3. (Recommended) Install Google Scholar MCP for better literature search:"
+echo "       git clone https://github.com/JackKuo666/Google-Scholar-MCP-Server.git ~/.local/share/mcp-servers/Google-Scholar-MCP-Server"
+echo "       .venv/bin/pip install -r ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/requirements.txt"
+echo "       claude mcp add --scope local google-scholar -- $VENV_PY ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py"
+echo "  4. (Optional) Install AI Research Skills for expert ML guidance:"
+echo "       npx @anthropic-ai/claude-code-skill install @orchestra-research/ai-research-skills"
+echo "  5. Launch Claude Code with Sibyl plugin (inside tmux):"
+echo "       tmux new -s sibyl"
 echo "       cd \"$REPO_ROOT\""
 echo "       claude --plugin-dir \"$REPO_ROOT/plugin\" --dangerously-skip-permissions"
-echo "  4. Inside Claude Code:"
+echo "  6. Inside Claude Code:"
 echo "       /sibyl-research:init              # Create a research project"
 echo "       /sibyl-research:start <project>   # Start autonomous research"
 echo ""

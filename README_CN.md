@@ -396,15 +396,15 @@ sibyl-system/
 │   ├── reflection.py           # 迭代日志
 │   ├── error_collector.py      # 结构化错误捕获（自我修复）
 │   ├── self_heal.py            # 错误路由、熔断器、修复编排
-│   └── prompts/                # 33 个 Agent Prompt 模板
+│   └── prompts/                # 40 个 Agent Prompt 模板
 ├── .claude/
 │   ├── agents/                 # Agent 层级定义（heavy/standard/light）
-│   └── skills/sibyl-*/         # 30+ Fork Skills（隔离上下文执行）
+│   └── skills/sibyl-*/         # 36 Fork Skills（隔离上下文执行）
 ├── plugin/commands/            # Claude Code 插件命令
 ├── tools/                      # 仓库级辅助工具（不是研究项目）
 ├── workspaces/                 # 仅放 Sibyl 研究项目工作区
-├── tests/                      # 单元测试（~320 个）
-└── requirements.txt            # 依赖（PyYAML, rich）
+├── tests/                      # 单元测试（~800 个）
+└── requirements.txt            # 依赖（PyYAML, rich, Flask, gunicorn）
 ```
 
 ### 工作区结构

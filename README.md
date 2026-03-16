@@ -399,15 +399,15 @@ sibyl-system/
 │   ├── reflection.py           # Iteration logging
 │   ├── error_collector.py      # Structured error capture for self-healing
 │   ├── self_heal.py            # Error routing, circuit breaker, repair orchestration
-│   └── prompts/                # 33 agent prompt templates
+│   └── prompts/                # 40 agent prompt templates
 ├── .claude/
 │   ├── agents/                 # Agent tier definitions (heavy/standard/light)
-│   └── skills/sibyl-*/         # 30+ Fork Skills (isolated context execution)
+│   └── skills/sibyl-*/         # 36 Fork Skills (isolated context execution)
 ├── plugin/commands/            # Claude Code plugin commands
 ├── tools/                      # Repo-level helper tools (not research projects)
 ├── workspaces/                 # Sibyl research project workspaces only
-├── tests/                      # Unit tests (~320 tests)
-└── requirements.txt            # Dependencies (PyYAML, rich)
+├── tests/                      # Unit tests (~800 tests)
+└── requirements.txt            # Dependencies (PyYAML, rich, Flask, gunicorn)
 ```
 
 ### Workspace Structure
@@ -467,6 +467,8 @@ See **[MCP Servers Guide](docs/mcp-servers.md)** for installation and MCP regist
 
 - **PyYAML** >= 6.0 — Config file parsing
 - **rich** >= 13.0 — Terminal formatted output
+- **Flask** >= 3.0 — Dashboard web server
+- **gunicorn** >= 22.0 — Production WSGI server for dashboard
 
 ### Optional Tools
 

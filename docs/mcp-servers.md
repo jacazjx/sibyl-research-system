@@ -122,8 +122,19 @@ claude mcp add --scope local arxiv-mcp-server -- /ABSOLUTE/PATH/TO/sibyl-researc
 ```bash
 # Clone the repository
 git clone https://github.com/JackKuo666/Google-Scholar-MCP-Server.git ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
-cd ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
-pip install -r requirements.txt
+
+# Install dependencies into Sibyl's venv (NOT system pip)
+cd /ABSOLUTE/PATH/TO/sibyl-research-system
+.venv/bin/pip install -r ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/requirements.txt
+```
+
+### Configure (preferred: `claude mcp add`)
+
+Use the repo's absolute `.venv/bin/python3` path so Claude Code launches the interpreter that has the dependencies installed:
+
+```bash
+claude mcp add --scope local google-scholar -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 \
+  ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py
 ```
 
 ### Manual JSON fallback
@@ -132,13 +143,15 @@ pip install -r requirements.txt
 {
   "mcpServers": {
     "google-scholar": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py"],
       "env": {}
     }
   }
 }
 ```
+
+> **Important**: The server name **must** be `"google-scholar"` — Sibyl's agent prompts reference tools as `mcp__google-scholar__search_google_scholar_key_words`.
 
 > **Note**: If Google Scholar MCP is unavailable, the system falls back to arXiv + WebSearch for literature discovery.
 
@@ -211,6 +224,15 @@ See [Codex Integration](codex-integration.md) for full details.
 npm install -g @larksuiteoapi/lark-mcp
 ```
 
+### Configure (preferred: `claude mcp add`)
+
+```bash
+claude mcp add --scope local lark \
+  -e LARK_APP_ID=your-app-id \
+  -e LARK_APP_SECRET=your-app-secret \
+  -- npx -y @larksuiteoapi/lark-mcp
+```
+
 ### Manual JSON fallback
 
 ```json
@@ -246,6 +268,14 @@ Requires a Feishu/Lark app with tenant access token. See [Feishu/Lark Setup](fei
 npm install -g feishu-mcp
 ```
 
+### Configure (preferred: `claude mcp add`)
+
+```bash
+claude mcp add --scope local feishu \
+  -e FEISHU_USER_ACCESS_TOKEN=your-user-token \
+  -- feishu-mcp
+```
+
 ### Manual JSON fallback
 
 ```json
@@ -279,7 +309,14 @@ Requires user OAuth token. See [Feishu/Lark Setup](feishu-lark-setup.md).
 ### Install
 
 ```bash
-pip install biorxiv-mcp-server
+# Install into Sibyl's venv
+.venv/bin/pip install biorxiv-mcp-server
+```
+
+### Configure (preferred: `claude mcp add`)
+
+```bash
+claude mcp add --scope local claude_ai_bioRxiv -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 -m biorxiv_mcp
 ```
 
 ### Manual JSON fallback
@@ -288,13 +325,15 @@ pip install biorxiv-mcp-server
 {
   "mcpServers": {
     "claude_ai_bioRxiv": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["-m", "biorxiv_mcp"],
       "env": {}
     }
   }
 }
 ```
+
+> **Important**: The server name **must** be `"claude_ai_bioRxiv"` — Sibyl's agent prompts reference tools as `mcp__claude_ai_bioRxiv__search_preprints`.
 
 ## Playwright MCP
 
@@ -371,7 +410,7 @@ All servers configured together:
       "args": ["-m", "arxiv_mcp_server"]
     },
     "google-scholar": {
-      "command": "python",
+      "command": "/ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3",
       "args": ["~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py"]
     },
     "codex": {

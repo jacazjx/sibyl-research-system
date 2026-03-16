@@ -7,7 +7,18 @@
 # Example: /Users/you/.sibyl/workspaces
 workspaces_dir: workspaces
 
-# GPU server (REQUIRED: set these to your actual server)
+# ── Compute Backend ────────────────────────────────────────────────────
+# "local" = run experiments on local GPUs directly (default)
+# "ssh"   = run experiments on remote GPU server via SSH
+compute_backend: local
+
+# ── Local GPU (compute_backend: local) ────────────────────────────────
+# local_env_type: "conda"          # "conda" or "venv"
+# local_conda_path: ""             # empty = system conda
+# local_conda_env_name: ""         # empty = sibyl_<project>
+
+# ── Remote GPU (compute_backend: ssh) ─────────────────────────────────
+# To use remote GPUs, set compute_backend: ssh and configure below:
 # Use "default" when ssh-mcp-server is configured with --host/--username directly.
 # If your MCP setup resolves a named SSH host from ~/.ssh/config, use that host alias instead.
 ssh_server: "default"              # SSH MCP connection name exposed to Sibyl
@@ -17,7 +28,7 @@ remote_env_type: "conda"           # "conda" or "venv"
 # remote_conda_path: ""            # empty = auto {remote_base}/miniconda3/bin/conda
 # remote_conda_env_name: ""        # empty = sibyl_<project>; set e.g. "base" to reuse an existing env
 
-# GPU polling (for shared servers)
+# GPU polling (for shared GPUs — works with both local and ssh backends)
 gpu_poll_enabled: true
 gpu_free_threshold_mb: 2000
 gpu_poll_interval_sec: 600         # 10 minutes
@@ -32,6 +43,7 @@ experiment_mode: ssh_mcp
 
 # Codex independent review
 codex_enabled: false
+# codex_idea_rounds: 2  # Codex-guided idea refinement rounds (0 = no iteration)
 
 # Language for control-plane output: "zh" (default) or "en"
 # Paper drafting and LaTeX stay in English regardless of this setting.
@@ -39,6 +51,14 @@ language: zh
 
 # Feishu/Lark sync
 lark_enabled: true
+
+# Research focus: how readily the system pivots vs persists with the current idea
+# 1=explore (pivot early, broad candidate pool)
+# 2=open (lean toward exploring alternatives)
+# 3=balanced (default, current behavior)
+# 4=focused (persist longer, narrow candidate pool)
+# 5=deep_focus (exhaust optimization before pivoting)
+research_focus: 3
 
 # Iteration control
 idea_exp_cycles: 6         # max PIVOT count
@@ -50,7 +70,7 @@ debate_rounds: 2           # debate rounds
 
 # Experiment settings
 # experiment_timeout: 300  # seconds per experiment script
-# pilot_samples: 16
+# pilot_samples: 100
 # pilot_timeout: 600
 # pilot_seeds: [42]
 # full_seeds: [42, 123, 456]

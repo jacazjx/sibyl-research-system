@@ -36,18 +36,56 @@ remote_conda_path: /home/user/miniforge3/bin/conda
 
 See [config.example.yaml](../config.example.yaml) for a minimal example.
 
-## GPU Server
+## Compute Backend
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `compute_backend` | string | `"local"` | Where to run experiments: `local` (local GPUs) or `ssh` (remote server) |
+| `max_gpus` | int | `4` | Maximum GPUs to use (picks any free ones dynamically) |
+| `gpus_per_task` | int | `1` | GPUs allocated per experiment task |
+
+### Local GPU (`compute_backend: local`)
+
+Run experiments directly on the local machine's GPUs. This is the default.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `local_env_type` | string | `"conda"` | Python environment type: `conda` \| `venv` |
+| `local_conda_path` | string | `""` | Custom conda path (empty = system `conda`) |
+| `local_conda_env_name` | string | `""` | Conda env name (empty = auto `sibyl_<project>`) |
+
+```yaml
+compute_backend: local
+local_env_type: conda
+local_conda_env_name: my_ml_env  # reuse an existing conda env
+```
+
+### Remote GPU (`compute_backend: ssh`)
+
+Run experiments on a remote GPU server via SSH MCP.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `ssh_server` | string | `"default"` | SSH MCP connection name used for remote execution |
 | `remote_base` | string | `"/home/user/sibyl_system"` | Base directory on remote server |
-| `max_gpus` | int | `4` | Maximum GPUs to use (picks any free ones dynamically) |
-| `gpus_per_task` | int | `1` | GPUs allocated per experiment task |
 
 `ssh_server` depends on how your SSH MCP server is configured:
 - Use `default` when `ssh-mcp-server` is launched with explicit `--host/--port/--username` arguments.
 - Use a named host such as `my-gpu-box` only when your MCP setup resolves that connection name via your SSH configuration.
+
+```yaml
+compute_backend: ssh
+ssh_server: my-gpu-box
+remote_base: /data/sibyl
+```
+
+### Adding New Backends
+
+The backend system is pluggable. To add a new backend (e.g., SLURM, Kubernetes):
+
+1. Create `sibyl/compute/<backend>_backend.py` implementing `ComputeBackend` ABC
+2. Register it in `sibyl/compute/registry.py`
+3. Add the backend name to `valid_compute_backends` in `sibyl/config.py`
 
 ## GPU Polling (Shared Servers)
 
@@ -73,7 +111,7 @@ Treat GPUs with low VRAM usage as available, even if allocated.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `pilot_samples` | int | `16` | Number of samples for pilot validation |
+| `pilot_samples` | int | `100` | Number of samples for pilot validation |
 | `pilot_timeout` | int | `600` | Pilot experiment timeout in seconds |
 | `pilot_seeds` | list[int] | `[42]` | Random seeds for pilot runs |
 
@@ -82,6 +120,37 @@ Treat GPUs with low VRAM usage as available, even if allocated.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `full_seeds` | list[int] | `[42, 123, 456]` | Random seeds for full experiment runs |
+
+## Research Focus
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `research_focus` | int | `3` | Controls how readily the system pivots vs persists (1–5) |
+
+How focused the system stays on a given research direction across iterations:
+
+| Level | Name | Behavior |
+|-------|------|----------|
+| 1 | `explore` | Pivot early at modest negative signals. Broad candidate pool (3-4 ideas). |
+| 2 | `open` | Lean toward pivoting when results are below baseline. Pool: 2-3 ideas. |
+| 3 | `balanced` | Default (current behavior). Fair evidence-based decisions. Pool: 2-3 ideas. |
+| 4 | `focused` | Persist longer; only pivot when core hypotheses are clearly refuted. Pool: 1-2 ideas. |
+| 5 | `deep_focus` | Exhaust optimization before pivoting. Focus on 1 front-runner. |
+
+This parameter influences three decision points:
+- **Supervisor decision** (`experiment_decision`): PIVOT vs PROCEED threshold
+- **Idea validation** (`idea_validation_decision`): ADVANCE / REFINE / PIVOT tendency
+- **Synthesizer** (`idea_debate`): Candidate pool size and convergence strategy
+
+Hard limits (`idea_exp_cycles`, `idea_validation_rounds`) are not affected — `research_focus` biases decisions within those limits.
+
+```yaml
+# Deep investigation of a promising idea
+research_focus: 5
+
+# Rapid exploration of many ideas
+research_focus: 1
+```
 
 ## Pipeline Control
 
@@ -146,7 +215,7 @@ language: en
 - **`server_codex`**: Upload experiment prompt, launch Codex CLI on server to execute locally.
 - **`server_claude`**: Upload experiment prompt, launch Claude CLI on server to execute locally.
 
-## Remote Environment
+## Remote Environment (SSH Backend)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -161,6 +230,12 @@ language: en
 |-------|------|---------|-------------|
 | `codex_enabled` | bool | `false` | Enable GPT-5.4 independent cross-review after Codex MCP is installed |
 | `codex_model` | string | `""` | Optional model override for Codex review calls (empty = use Codex MCP default) |
+| `codex_idea_rounds` | int | `2` | Max Codex-guided idea refinement rounds; `0` = skip Codex iteration |
+
+When `codex_enabled: true` and `codex_idea_rounds > 0`, the system iterates on ideas based on Codex feedback:
+1. After the idea debate (6 agents + synthesizer + novelty checker), Codex reviews the proposal
+2. If Codex outputs `VERDICT: REVISE`, the system loops back to a full idea debate round with feedback as context
+3. This repeats up to `codex_idea_rounds` times, then advances regardless
 
 See [Codex Integration](codex-integration.md) for full setup instructions.
 
@@ -231,19 +306,48 @@ Today, runtime model selection is controlled by:
 If you include the legacy nested blocks, treat them as compatibility data rather
 than the authoritative runtime switchboard.
 
-## Full Example
+## Full Example (Local GPU)
 
 ```yaml
-# GPU server
+# Local GPU execution (default)
+compute_backend: local
+max_gpus: 2
+local_env_type: conda
+local_conda_env_name: ml_env
+
+# Pipeline
+writing_mode: parallel
+codex_enabled: false
+lark_enabled: false
+debate_rounds: 3
+idea_exp_cycles: 4
+
+# GPU polling (shared workstation)
+gpu_poll_enabled: true
+gpu_free_threshold_mb: 4000
+gpu_poll_interval_sec: 300
+
+# Experiments
+pilot_samples: 32
+pilot_timeout: 900
+full_seeds: [42, 123, 456, 789]
+experiment_timeout: 600
+```
+
+## Full Example (Remote SSH)
+
+```yaml
+# Remote GPU via SSH
+compute_backend: ssh
 ssh_server: "default"
 remote_base: "/data/sibyl"
 max_gpus: 8
 gpus_per_task: 2
 remote_env_type: "conda"
+experiment_mode: ssh_mcp
 
 # Pipeline
 writing_mode: parallel
-experiment_mode: ssh_mcp
 codex_enabled: false
 lark_enabled: false
 debate_rounds: 3

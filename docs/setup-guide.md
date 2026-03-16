@@ -277,11 +277,12 @@ pip install torch transformers datasets matplotlib numpy scikit-learn
 Run these checks to confirm everything works:
 
 1. **Python env**: `.venv/bin/python3 -c "from sibyl.config import Config; print('✓ Python OK')"`
-2. **Config file**: `cat config.yaml` — fresh installs should show `ssh_server`, `remote_base`, `max_gpus`, `language`, and `codex_enabled: false`
+2. **Config file**: `cat config.yaml` — fresh installs should show `compute_backend`, `max_gpus`, `language`, and `codex_enabled: false`
 3. **MCP servers**: Restart Claude Code and check that `mcp__ssh-mcp-server__list-servers` and `mcp__arxiv-mcp-server__search_papers` are available
-4. **Codex (recommended on your own machine once installed)**: after installing Codex MCP and setting `OPENAI_API_KEY`, flip `codex_enabled: true` in your local `config.yaml` and verify `mcp__codex__codex` is available. That file exists in your working tree, but Git does not track or commit it
-5. **tmux**: `tmux -V` returns a version — needed for Sentinel watchdog auto-recovery
-6. **Plugin**: `/sibyl-research:status` runs without error
+4. **Google Scholar (recommended)**: check that `mcp__google-scholar__search_google_scholar_key_words` is available if installed
+5. **Codex (recommended on your own machine once installed)**: after installing Codex MCP and setting `OPENAI_API_KEY`, flip `codex_enabled: true` in your local `config.yaml` and verify `mcp__codex__codex` is available. That file exists in your working tree, but Git does not track or commit it
+6. **tmux**: `tmux -V` returns a version — needed for Sentinel watchdog auto-recovery
+7. **Plugin**: `/sibyl-research:status` runs without error
 
 If all pass, remind the user to launch inside tmux with `--dangerously-skip-permissions` for fully autonomous operation, and start researching:
 ```
@@ -325,20 +326,43 @@ orchestra_skills_max: 15                      # Max skills shown per agent (defa
 
 ---
 
+## Step 11: Google Scholar MCP (Recommended)
+
+**Goal**: Install the Google Scholar MCP for improved citation and author search. This server is referenced by 10+ Sibyl agents and significantly enhances literature discovery.
+
+**Install**:
+```bash
+git clone https://github.com/JackKuo666/Google-Scholar-MCP-Server.git ~/.local/share/mcp-servers/Google-Scholar-MCP-Server
+.venv/bin/pip install -r ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/requirements.txt
+```
+
+**Configure**:
+```bash
+claude mcp add --scope local google-scholar -- /ABSOLUTE/PATH/TO/sibyl-research-system/.venv/bin/python3 \
+  ~/.local/share/mcp-servers/Google-Scholar-MCP-Server/google_scholar_server.py
+```
+
+Replace `/ABSOLUTE/PATH/TO/sibyl-research-system` with the actual clone path.
+
+**Verify**: After restarting Claude Code, check that `mcp__google-scholar__search_google_scholar_key_words` is available.
+
+> **Note**: If Google Scholar MCP is unavailable, the system falls back to arXiv + WebSearch for literature discovery.
+
+---
+
 ## Optional MCP Servers
 
 These are not required but enhance functionality. Configure only if the user wants them.
 
-| Server | Purpose | Install | Config name |
-|--------|---------|---------|-------------|
-| [Google Scholar](https://github.com/JackKuo666/Google-Scholar-MCP-Server) | Academic search | `git clone` + `pip install -r requirements.txt` | `"google-scholar"` |
-| [Codex](https://github.com/openai/codex) | GPT-5.4 cross-review | `npm install -g @openai/codex` | `"codex"` |
-| [Lark MCP](https://github.com/larksuite/lark-openapi-mcp) | Feishu Bitable/IM | `npm install -g @larksuiteoapi/lark-mcp` | `"lark"` |
-| [Feishu MCP](https://github.com/cso1z/Feishu-MCP) | Feishu documents | `npm install -g feishu-mcp` | `"feishu"` |
-| [bioRxiv](https://github.com/JackKuo666/bioRxiv-MCP-Server) | Biology preprints | `pip install biorxiv-mcp-server` | `"claude_ai_bioRxiv"` |
-| [Playwright](https://github.com/microsoft/playwright-mcp) | Web browsing | `npm install -g @playwright/mcp` | `"playwright"` |
+| Server | Purpose | Install | Register |
+|--------|---------|---------|----------|
+| [Codex](https://github.com/openai/codex) | GPT-5.4 cross-review | `npm install -g @openai/codex` | `claude mcp add --scope local codex -- codex mcp-server` |
+| [Lark MCP](https://github.com/larksuite/lark-openapi-mcp) | Feishu Bitable/IM | `npm install -g @larksuiteoapi/lark-mcp` | `claude mcp add --scope local lark -- npx -y @larksuiteoapi/lark-mcp` |
+| [Feishu MCP](https://github.com/cso1z/Feishu-MCP) | Feishu documents | `npm install -g feishu-mcp` | `claude mcp add --scope local feishu -- feishu-mcp` |
+| [bioRxiv](https://github.com/JackKuo666/bioRxiv-MCP-Server) | Biology preprints | `.venv/bin/pip install biorxiv-mcp-server` | `claude mcp add --scope local claude_ai_bioRxiv -- .venv/bin/python3 -m biorxiv_mcp` |
+| [Playwright](https://github.com/microsoft/playwright-mcp) | Web browsing | `npm install -g @playwright/mcp` | `claude mcp add --scope local playwright -- npx -y @playwright/mcp` |
 
-See [MCP Servers Guide](mcp-servers.md) for full configuration details of each.
+See [MCP Servers Guide](mcp-servers.md) for full configuration details of each, including environment variables for Lark/Feishu.
 
 ---
 

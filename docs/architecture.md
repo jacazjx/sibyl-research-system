@@ -4,16 +4,16 @@ Deep dive into Sibyl Research System internals. For contributors and advanced us
 
 ## Orchestrator State Machine
 
-The core of Sibyl is a **18-stage state machine** in `sibyl/orchestrate.py`.
+The core of Sibyl is a **19-stage state machine** in `sibyl/orchestrate.py`.
 
 ### State Flow
 
 ```
 init → literature_search → idea_debate → planning → pilot_experiments
-→ experiment_cycle → result_debate → experiment_decision
-→ writing_outline → writing_sections → writing_critique
-→ writing_integrate → writing_final_review → writing_latex
-→ review → reflection → quality_gate → done
+→ idea_validation_decision → experiment_cycle → result_debate
+→ experiment_decision → writing_outline → writing_sections
+→ writing_critique → writing_integrate → writing_final_review
+→ writing_latex → review → reflection → quality_gate → done
 ```
 
 ### Key Methods
@@ -54,6 +54,7 @@ The orchestrator returns actions that the main session executes:
 | `agents_parallel` | Legacy: parallel agents with dynamic prompts | `Agent` tool (parallel) |
 | `bash` | Shell command | `Bash` tool |
 | `gpu_poll` | Poll for free GPUs | SSH MCP → parse → write marker file |
+| `experiment_wait` | Wait for running experiments to complete | Adaptive polling + dynamic dispatch |
 | `done` | Pipeline complete | Report to user |
 | `stopped` | User explicitly halted the project | Resume only after `/sibyl-research:resume` |
 

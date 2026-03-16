@@ -128,10 +128,10 @@ Sibyl 的所有 agent 角色已封装为 `context: fork` skill，运行在独立
 - **低 token 消耗**: 轮询等待期间使用 sleep，不做 LLM 推理
 - **状态面板**: 每次轮询后调用 `cli_experiment_status` 打印进度横幅
 - **动态调度**: 检测到任务完成后调用 `cli_dispatch_tasks` 派发排队任务
-- **后台 supervisor**: Action 的 `experiment_monitor.background_agent` 必须用 `run_in_background` 启动，不阻塞主循环
-- **主系统唤醒 inbox**: Action 还包含 `wake_cmd` 和 `wake_check_interval_sec`，默认每 90 秒检查一次；主系统等待实验时不可一口气睡到下一个大轮询点
+- **后台监控 daemon**: PostToolUse hook 自动从 `experiment_monitor.script` 启动纯 bash daemon，零 token 消耗。daemon 处理 SSH 轮询、GPU 刷新、动态调度、卡死检测
+- **后台 supervisor（可选）**: 仅当 `supervisor_enabled=true` 时，Action 的 `experiment_monitor.background_agent` 才存在，需用 `run_in_background` 启动
+- **主系统唤醒 inbox**: Action 包含 `wake_cmd` 和 `wake_check_interval_sec`，默认每 90 秒检查一次；bash daemon 和 supervisor 都会向 wake queue 投递事件
 - 当 `wake_cmd` 返回需要协作的事件时，主系统要立即介入；不要等到下一个 2/5/10 分钟大轮询
-- Action 包含 `experiment_monitor` 字段: `check_cmd`(DONE 检查), `pid_check_cmd`(进程存活), `progress_check_cmd`(详细进度), `status_cmd`(状态面板), `poll_interval_sec`(大轮询间隔), `wake_check_interval_sec`(短周期唤醒检查), `wake_cmd`(后台 supervisor 协作 inbox), `background_agent`(后台实验监督 skill)
 
 ### 暂停标记处理
 - `status.json` 使用显式 `paused` / `stop_requested` 布尔值，并保留可选时间戳用于诊断；若存在遗留 `paused_at` 标记，`cli_next()` 会自动清除并继续执行，不会把项目卡在“暂停等待人工恢复”
@@ -164,6 +164,20 @@ Sentinel 是纯 bash 看门狗脚本（`sibyl/sentinel.sh`），跑在 tmux 的 
 - **隔离约束**: Session ID 和 tmux pane 都按规范化后的项目根路径登记；一个 Claude pane/session 只能归属一个项目
 - **启动**: `/sibyl-research:start` 和 `/sibyl-research:resume` 自动在 tmux 中启动
 - **停止**: `/sibyl-research:stop` 写入停止信号
+
+### Plugin Hooks（后台进程自动化）
+Plugin 级 hook（`plugin/hooks/hooks.json`）将后台进程管理从 LLM 下沉到确定性脚本，零 token 消耗。
+
+| Hook 事件 | 脚本 | 职责 |
+|---|---|---|
+| PostToolUse(Bash) | `on-bash-complete.sh` | 检测 `sync_requested` → 注入飞书同步提示；检测 `experiment_monitor` → 启动 bash 监控 daemon |
+| SessionStart | `on-session-start.sh` | 启动 self-heal 监控 daemon；恢复 pending sync；重启死亡的实验监控 |
+| Stop | `on-stop.sh` | 清理已停止/完成项目的 daemon PID |
+
+- **实验监控 daemon**: 替代 Opus experiment-supervisor subagent。纯 bash 后台进程，执行 SSH 轮询（DONE/PID/PROGRESS）、GPU 状态刷新（nvidia-smi）、动态调度（cli_dispatch_tasks）、卡死检测
+- **`supervisor_enabled` 配置**（默认 `false`）: 设为 `true` 可额外启动 Opus supervisor subagent 用于复杂异常诊断。对开源用户建议保持 `false` 以节省 API 成本
+- Hook 脚本位于 `plugin/hooks/scripts/`，共享工具函数在 `lib/sibyl-hook-utils.sh`
+- 上下文注入标记: `[LARK-SYNC-HOOK]`（飞书同步）、`[EXP-MONITOR-HOOK]`（实验监控）、`[SIBYL-SESSION-HOOK]`（会话恢复）
 
 ### Codex 集成
 - `codex_enabled`: 启用后，idea_debate、result_debate、review 阶段可引入 Codex 独立审查
