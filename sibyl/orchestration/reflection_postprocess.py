@@ -1,9 +1,16 @@
-"""Reflection post-processing helpers extracted from the legacy orchestrator."""
+"""Reflection post-processing helpers extracted from the legacy orchestrator.
+
+Also hosts :class:`IterationLogger` (moved from ``sibyl.reflection``).
+"""
 
 from __future__ import annotations
 
 import json
+import logging
+import threading
+import time as _time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from sibyl.event_logger import EventLogger
@@ -14,6 +21,78 @@ from .review_artifacts import (
     summarize_critic_findings,
     summarize_supervisor_review,
 )
+
+_log = logging.getLogger(__name__)
+
+# Exposed so tests (or callers that need determinism) can join the background
+# thread spawned by ``run_post_reflection_hook``.
+_last_evolution_thread: threading.Thread | None = None
+
+
+# ══════════════════════════════════════════════
+# IterationLogger (moved from sibyl/reflection.py)
+# ══════════════════════════════════════════════
+
+
+class IterationLogger:
+    """Logs each iteration of the pipeline with improvements and issues."""
+
+    def __init__(self, workspace_root: Path):
+        self.log_dir = workspace_root / "logs" / "iterations"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+    def log_iteration(
+        self,
+        iteration: int,
+        stage: str,
+        changes: list[str],
+        issues_found: list[str],
+        issues_fixed: list[str],
+        quality_score: float,
+        notes: str = "",
+    ):
+        entry = {
+            "iteration": iteration,
+            "stage": stage,
+            "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            "changes": changes,
+            "issues_found": issues_found,
+            "issues_fixed": issues_fixed,
+            "quality_score": quality_score,
+            "notes": notes,
+        }
+
+        log_file = self.log_dir / f"iter_{iteration:03d}_{stage}.json"
+        log_file.write_text(
+            json.dumps(entry, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+        # Append to master log
+        master_log = self.log_dir / "master_log.jsonl"
+        with open(master_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        return entry
+
+    def get_history(self) -> list[dict]:
+        master_log = self.log_dir / "master_log.jsonl"
+        if not master_log.exists():
+            return []
+        entries = []
+        for line in master_log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return entries
+
+    def get_latest_score(self, stage: str) -> float | None:
+        history = self.get_history()
+        for entry in reversed(history):
+            if entry["stage"] == stage:
+                return entry["quality_score"]
+        return None
 
 
 def _load_reflection_payload(
@@ -122,8 +201,6 @@ def _log_iteration(
     classified_issues: list[dict],
     quality_trajectory: str,
 ) -> None:
-    from sibyl.reflection import IterationLogger
-
     logger = IterationLogger(orchestrator.ws.root)
     logger.log_iteration(
         iteration=iteration,
@@ -251,12 +328,117 @@ def _write_self_check_diagnostics(orchestrator: Any) -> None:
         diag_path.unlink()
 
 
+def _open_workspace_readonly(ws_root: Path) -> Any:
+    """Open an existing workspace for background I/O without full init."""
+    from sibyl.workspace import Workspace
+
+    return Workspace.open_existing(ws_root.parent, ws_root.name)
+
+
+def _run_evolution_async(
+    *,
+    ws_root: Path,
+    ws_name: str,
+    iteration: int,
+    issues_found: list[str],
+    score: float,
+    quality_trajectory: str,
+    classified_issues: list[dict],
+    success_patterns: list[str],
+) -> None:
+    """Background thread target: evolution recording, quality trend, self-check.
+
+    All arguments are plain values (no reference to the orchestrator object) to
+    avoid thread-safety issues.
+    """
+    from sibyl.evolution import EvolutionEngine, sync_workspace_snapshot
+
+    errors: list[str] = []
+
+    # Step 4: record evolution outcome
+    try:
+        engine = EvolutionEngine()
+        engine.record_outcome(
+            project=ws_name,
+            stage="reflection",
+            issues=issues_found,
+            score=score,
+            notes=f"Iteration {iteration}; trajectory={quality_trajectory}",
+            classified_issues=classified_issues[:10],
+            success_patterns=success_patterns[:10],
+        )
+        engine.run_cross_project_evolution()
+        # Update effectiveness tracking
+        try:
+            engine.update_effectiveness(classified_issues)
+        except Exception as eff_exc:
+            errors.append(f"Effectiveness update failed: {eff_exc}")
+        sync_workspace_snapshot(ws_root)
+    except Exception as exc:
+        errors.append(f"Evolution recording failed: {exc}")
+
+    # Step 5: write quality trend
+    try:
+        engine = EvolutionEngine()
+        trend = engine.get_quality_trend(project=ws_name)
+        if trend:
+            trend_lines = ["# 质量趋势\n"]
+            for entry in trend[-10:]:
+                trend_lines.append(f"- {entry['timestamp']}: score={entry['score']}")
+            scores = [entry["score"] for entry in trend]
+            if len(scores) >= 2:
+                delta = scores[-1] - scores[-2]
+                direction = "上升" if delta > 0 else ("下降" if delta < 0 else "持平")
+                trend_lines.append(f"\n趋势: {direction} (Δ={delta:+.1f})")
+            ws = _open_workspace_readonly(ws_root)
+            ws.write_file("logs/quality_trend.md", "\n".join(trend_lines))
+    except Exception as exc:
+        errors.append(f"Quality trend recording failed: {exc}")
+
+    # Step 6: write self-check diagnostics
+    try:
+        engine = EvolutionEngine()
+        diagnostics = engine.get_self_check_diagnostics(project=ws_name)
+        if diagnostics:
+            ws = _open_workspace_readonly(ws_root)
+            ws.write_file(
+                "logs/self_check_diagnostics.json",
+                json.dumps(diagnostics, indent=2, ensure_ascii=False),
+            )
+        else:
+            ws = _open_workspace_readonly(ws_root)
+            diag_path = ws.project_path("logs/self_check_diagnostics.json")
+            if diag_path.exists():
+                diag_path.unlink()
+    except Exception as exc:
+        errors.append(f"Self-check diagnostics failed: {exc}")
+
+    # Persist any errors that occurred in the background
+    if errors:
+        try:
+            ws = _open_workspace_readonly(ws_root)
+            for err_msg in errors:
+                ws.add_error(err_msg)
+        except Exception:
+            # Last resort: log to stderr
+            for err_msg in errors:
+                _log.error("post-reflection async error: %s", err_msg)
+
+
 def run_post_reflection_hook(
     orchestrator: Any,
     *,
     load_workspace_action_plan: Callable[..., dict | None],
 ) -> None:
-    """Process reflection outputs and persist iteration/evolution side effects."""
+    """Process reflection outputs and persist iteration/evolution side effects.
+
+    Steps 1-3 (iteration log, research diary, event emit) run synchronously
+    because they write to workspace-local files and are fast.
+
+    Steps 4-6 (evolution recording, quality trend, self-check diagnostics) are
+    I/O-intensive and run in a background daemon thread so they do not block
+    ``cli_record("reflection")`` from returning.
+    """
     iteration = orchestrator.ws.get_status().iteration
     (
         _action_plan,
@@ -275,6 +457,7 @@ def run_post_reflection_hook(
     )
     supervisor_review, score = _extract_quality_score(orchestrator)
 
+    # ── Synchronous steps (1-3) ────────────────────────────────────────
     try:
         _log_iteration(
             orchestrator,
@@ -311,28 +494,28 @@ def run_post_reflection_hook(
     except Exception:
         pass
 
-    try:
-        if orchestrator.config.evolution_enabled:
-            _record_evolution_outcome(
-                orchestrator,
+    # ── Async steps (4-6) ──────────────────────────────────────────────
+    global _last_evolution_thread  # noqa: PLW0603
+    if orchestrator.config.evolution_enabled:
+        # Extract all values needed by the background thread upfront
+        # to avoid touching the orchestrator object from another thread.
+        ws_root = Path(orchestrator.ws.root)
+        ws_name = str(orchestrator.ws.name)
+
+        t = threading.Thread(
+            target=_run_evolution_async,
+            kwargs=dict(
+                ws_root=ws_root,
+                ws_name=ws_name,
                 iteration=iteration,
-                issues_found=issues_found,
+                issues_found=list(issues_found),
                 score=score,
                 quality_trajectory=quality_trajectory,
-                classified_issues=classified_issues,
-                success_patterns=success_patterns,
-            )
-    except Exception as exc:
-        orchestrator.ws.add_error(f"Evolution recording failed: {exc}")
-
-    try:
-        if orchestrator.config.evolution_enabled:
-            _write_quality_trend(orchestrator)
-    except Exception as exc:
-        orchestrator.ws.add_error(f"Quality trend recording failed: {exc}")
-
-    try:
-        if orchestrator.config.evolution_enabled:
-            _write_self_check_diagnostics(orchestrator)
-    except Exception as exc:
-        orchestrator.ws.add_error(f"Self-check diagnostics failed: {exc}")
+                classified_issues=[dict(ci) for ci in classified_issues],
+                success_patterns=list(success_patterns),
+            ),
+            daemon=True,
+            name="sibyl-evolution-async",
+        )
+        _last_evolution_thread = t
+        t.start()

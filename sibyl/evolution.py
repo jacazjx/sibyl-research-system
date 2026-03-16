@@ -209,6 +209,62 @@ def normalize_quality_trajectory(trajectory: object) -> str:
     return "stagnant"
 
 
+# Synonym table for issue_key normalization — maps semantically equivalent
+# terms to a single canonical form so that "ablation study 缺失" and
+# "缺少 ablation" produce the same hash.
+ISSUE_SYNONYMS: dict[str, str] = {
+    # Chinese → English canonical forms
+    "缺失": "missing",
+    "缺少": "missing",
+    "缺乏": "missing",
+    "没有": "missing",
+    "不足": "insufficient",
+    "薄弱": "weak",
+    "较弱": "weak",
+    "不够": "insufficient",
+    "消融实验": "ablation",
+    "消融研究": "ablation",
+    "ablation study": "ablation",
+    "ablation studies": "ablation",
+    "ablation experiment": "ablation",
+    "复现": "reproducibility",
+    "可复现": "reproducibility",
+    "可复现性": "reproducibility",
+    "reproducible": "reproducibility",
+    "基线": "baseline",
+    "基准": "baseline",
+    "baseline comparison": "baseline",
+    "对比实验": "comparison",
+    "对比分析": "comparison",
+    "比较": "comparison",
+    "文献综述": "literature review",
+    "相关工作": "related work",
+    "related works": "related work",
+    "实验设计": "experiment design",
+    "一致性": "consistency",
+    "不一致": "inconsistency",
+    "冗余": "redundant",
+    "可读性": "readability",
+    "清晰度": "clarity",
+    "不清晰": "unclear",
+    "显著性": "significance",
+    "统计显著": "statistical significance",
+    "过拟合": "overfitting",
+    "欠拟合": "underfitting",
+}
+
+# Pre-sort by descending key length so longer phrases match first.
+_SORTED_SYNONYM_KEYS: list[str] = sorted(ISSUE_SYNONYMS, key=len, reverse=True)
+
+
+def _apply_synonym_normalization(text: str) -> str:
+    """Replace synonymous terms in *text* with their canonical form."""
+    for key in _SORTED_SYNONYM_KEYS:
+        if key in text:
+            text = text.replace(key, ISSUE_SYNONYMS[key])
+    return text
+
+
 def build_issue_key(description: str, category: str = "") -> str:
     category_value = normalize_issue_category(category, description=description)
     normalized = _normalize_text(description).lower()
@@ -217,8 +273,15 @@ def build_issue_key(description: str, category: str = "") -> str:
     normalized = re.sub(r"\b\d+(?:\.\d+)?(?:pp|%|x|h|min|hours?)?\b", " ", normalized)
     normalized = re.sub(r"[^\w\u4e00-\u9fff\s]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
-    preview = "-".join(normalized.split()[:8])[:72] or "issue"
-    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12] if normalized else "empty"
+    # Apply synonym normalization before hashing
+    normalized = _apply_synonym_normalization(normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    # Sort tokens so word-order differences do not affect the key
+    # (e.g., "missing ablation" == "ablation missing").
+    tokens = sorted(normalized.split())
+    sorted_text = " ".join(tokens)
+    preview = "-".join(tokens[:8])[:72] or "issue"
+    digest = hashlib.sha1(sorted_text.encode("utf-8")).hexdigest()[:12] if sorted_text else "empty"
     return f"{category_value}:{preview}:{digest}"
 
 
@@ -1086,3 +1149,77 @@ class EvolutionEngine:
     def _save_insights(self, insights: list[EvolutionInsight]):
         data = [asdict(i) for i in insights]
         _write_json_atomic(self.insights_path, data)
+
+    # ------------------------------------------------------------------
+    # Effectiveness tracking (optimization #8)
+    # ------------------------------------------------------------------
+
+    def update_effectiveness(
+        self,
+        classified_issues: list[dict],
+        previous_overlay_keys: list[str] | None = None,
+    ) -> dict[str, str]:
+        """Compare current issues against digest lessons and update effectiveness.
+
+        Logic:
+        - If a lesson's issue_key still appears in *classified_issues* → ``ineffective``
+        - If a lesson's issue_key is absent from *classified_issues* AND the
+          lesson has been around for >=2 outcomes → ``effective``
+        - Otherwise stays ``unverified``
+
+        *previous_overlay_keys* is an optional pre-computed list of issue keys
+        that were present in the overlay at the start of this iteration. When
+        ``None`` the method derives keys from the current digest.
+
+        Returns a mapping ``{issue_key: new_effectiveness}`` for keys that changed.
+        """
+        with _evolution_lock(self.EVOLUTION_DIR):
+            outcomes = self._load_outcomes()
+            digest = self._build_digest_from_outcomes(outcomes)
+
+            # Build set of issue keys present in the current iteration
+            current_keys: set[str] = set()
+            for issue in classified_issues:
+                key = (
+                    issue.get("issue_key")
+                    or build_issue_key(
+                        issue.get("description", ""),
+                        issue.get("category", ""),
+                    )
+                )
+                if key:
+                    current_keys.add(key)
+
+            # Determine which digest keys were "active lessons" before this iteration
+            if previous_overlay_keys is not None:
+                lesson_keys = set(previous_overlay_keys)
+            else:
+                lesson_keys = set()
+                for entry in digest:
+                    key = build_issue_key(entry.pattern_summary, entry.category)
+                    if key:
+                        lesson_keys.add(key)
+
+            changed: dict[str, str] = {}
+            for entry in digest:
+                entry_key = build_issue_key(entry.pattern_summary, entry.category)
+                if not entry_key or entry_key not in lesson_keys:
+                    continue
+
+                if entry_key in current_keys:
+                    # Issue still present → lesson was ineffective
+                    if entry.effectiveness != "ineffective":
+                        entry.effectiveness = "ineffective"
+                        changed[entry_key] = "ineffective"
+                else:
+                    # Issue disappeared AND lesson existed for >=2 occurrences → effective
+                    if entry.total_occurrences >= 2 and entry.effectiveness != "effective":
+                        entry.effectiveness = "effective"
+                        changed[entry_key] = "effective"
+
+            if changed:
+                self._write_digest_cache(digest)
+                insights = self._analyze_patterns_from_digest(digest)
+                self._save_insights(insights)
+
+            return changed

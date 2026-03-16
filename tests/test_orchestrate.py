@@ -49,11 +49,13 @@ class TestStageTransitions:
             "literature_search", "idea_debate", "planning",
             "pilot_experiments", "experiment_cycle", "result_debate",
             "experiment_decision", "writing_outline", "writing_sections",
-            "writing_critique", "writing_integrate", "writing_final_review",
+            # writing_critique merged into writing_integrate
+            "writing_integrate", "writing_final_review",
             "writing_latex", "review",
             "reflection",
         ]
-        o = make_orchestrator(stage="literature_search", idea_validation_rounds=0)
+        o = make_orchestrator(stage="literature_search", idea_validation_rounds=0,
+                              speculative_outline=False)
         for i, stage in enumerate(linear_stages[:-1]):
             o.ws.update_stage(stage)
             # writing_final_review needs a passing review file, otherwise
@@ -1123,17 +1125,25 @@ class TestActionGeneration:
             assert t["name"].startswith("writer-")
         assert len(team["post_steps"]) == 0
 
-    def test_writing_critique_team_structure(self, make_orchestrator):
-        """writing_critique returns 6 section-critic teammates."""
-        o = make_orchestrator(stage="writing_critique")
+    def test_writing_integrate_team_structure(self, make_orchestrator):
+        """writing_integrate returns 6 section-critic teammates + editor post_step."""
+        o = make_orchestrator(stage="writing_integrate")
         action = o.get_next_action()
         team = action["team"]
-        assert team["team_name"] == "sibyl-writing-critique"
+        assert team["team_name"] == "sibyl-writing-integrate"
         assert len(team["teammates"]) == 6
         for t in team["teammates"]:
             assert t["skill"] == "sibyl-section-critic"
             assert t["name"].startswith("critic-")
-        assert len(team["post_steps"]) == 0
+        assert len(team["post_steps"]) == 1
+        assert team["post_steps"][0]["skill"] == "sibyl-editor"
+
+    def test_writing_critique_compat_redirects_to_integrate(self, make_orchestrator):
+        """Legacy writing_critique stage should redirect to writing_integrate."""
+        o = make_orchestrator(stage="writing_critique")
+        action = o.get_next_action()
+        assert action["stage"] == "writing_integrate"
+        assert action["action_type"] == "team"
 
     def test_all_stages_return_valid_action(self, make_orchestrator):
         """Every stage in STAGES must return a valid action dict."""
@@ -1202,6 +1212,10 @@ class TestPostReflectionHook:
                               lark_enabled=False, evolution_enabled=True)
         o.ws.write_file("supervisor/review_writing.md", "score: 6.0")
         o.record_result("reflection")
+        # Wait for async evolution thread to finish
+        from sibyl.orchestration.reflection_postprocess import _last_evolution_thread
+        if _last_evolution_thread is not None:
+            _last_evolution_thread.join(timeout=10)
         # Evolution engine should have recorded outcome
         from sibyl.evolution import EvolutionEngine
         engine = EvolutionEngine()
@@ -1245,6 +1259,11 @@ class TestPostReflectionHook:
         assert issue["status"] == "recurring"
         assert issue["issue_key"].startswith("analysis:")
         assert action_plan["quality_trajectory"] == "stagnant"
+
+        # Wait for async evolution thread to finish
+        from sibyl.orchestration.reflection_postprocess import _last_evolution_thread
+        if _last_evolution_thread is not None:
+            _last_evolution_thread.join(timeout=10)
 
         from sibyl.evolution import EvolutionEngine
 
@@ -1290,6 +1309,11 @@ class TestPostReflectionHook:
         o.ws.write_file("supervisor/review_writing.md", "score: 6.5")
 
         o.record_result("reflection")
+
+        # Wait for async evolution thread to finish
+        from sibyl.orchestration.reflection_postprocess import _last_evolution_thread
+        if _last_evolution_thread is not None:
+            _last_evolution_thread.join(timeout=10)
 
         trend = o.ws.read_file("logs/quality_trend.md")
         assert trend is not None
