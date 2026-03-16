@@ -88,7 +88,7 @@ class Config:
     speculative_outline: bool = True
 
     # Experiment execution
-    experiment_mode: str = "ssh_mcp"  # "ssh_mcp" | "server_codex" | "server_claude"
+    experiment_mode: str = "ssh_mcp"  # "ssh_mcp" | "server_codex" | "server_claude" | "local"
     server_codex_path: str = "codex"  # Codex CLI path on server
     server_claude_path: str = "claude"  # Claude CLI path on server
 
@@ -247,7 +247,7 @@ class Config:
                 f"Invalid writing_mode '{cfg.writing_mode}', "
                 f"must be one of {valid_writing_modes}"
             )
-        valid_experiment_modes = {"ssh_mcp", "server_codex", "server_claude"}
+        valid_experiment_modes = {"ssh_mcp", "server_codex", "server_claude", "local"}
         if cfg.experiment_mode not in valid_experiment_modes:
             raise ValueError(
                 f"Invalid experiment_mode '{cfg.experiment_mode}', "
@@ -362,7 +362,7 @@ class Config:
                 f"Invalid writing_mode '{cfg.writing_mode}', "
                 f"must be one of {valid_writing_modes}"
             )
-        valid_experiment_modes = {"ssh_mcp", "server_codex", "server_claude"}
+        valid_experiment_modes = {"ssh_mcp", "server_codex", "server_claude", "local"}
         if cfg.experiment_mode not in valid_experiment_modes:
             raise ValueError(
                 f"Invalid experiment_mode '{cfg.experiment_mode}', "
@@ -479,7 +479,7 @@ pilot_seeds: {_val('pilot_seeds')}
 full_seeds: {_val('full_seeds')}
 
 # ── Experiment Execution ────────────────────────────────────────────
-experiment_mode: {_val('experiment_mode')}              # "ssh_mcp" | "server_codex" | "server_claude"
+experiment_mode: {_val('experiment_mode')}              # "ssh_mcp" | "server_codex" | "server_claude" | "local"
 server_codex_path: {_val('server_codex_path')}                # Codex CLI path on server
 server_claude_path: {_val('server_claude_path')}              # Claude CLI path on server
 
