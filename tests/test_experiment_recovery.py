@@ -440,6 +440,42 @@ class TestEndToEndRecovery:
         assert len(final.recovery_log) == 2
 
 
+class TestSyncCompletedFromProgress:
+    def test_sync_completed_from_gpu_progress(self, tmp_path):
+        """When gpu_progress marks a task completed but experiment_state still
+        shows it running, loading experiment state should auto-sync."""
+        from sibyl.experiment_recovery import (
+            sync_completed_from_progress,
+        )
+        ws = tmp_path / "ws"
+        (ws / "exp").mkdir(parents=True)
+
+        # experiment_state: task_a running
+        state = ExperimentState(tasks={"task_a": {"status": "running", "gpu_ids": [0]}})
+        save_experiment_state(ws, state)
+
+        # gpu_progress: task_a completed
+        progress = {"completed": ["task_a"], "running": {}, "timings": {}}
+        (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+        updated = sync_completed_from_progress(ws)
+        assert updated.tasks["task_a"]["status"] == "completed"
+
+    def test_sync_noop_when_already_synced(self, tmp_path):
+        from sibyl.experiment_recovery import sync_completed_from_progress
+        ws = tmp_path / "ws"
+        (ws / "exp").mkdir(parents=True)
+
+        state = ExperimentState(tasks={"task_a": {"status": "completed", "gpu_ids": [0]}})
+        save_experiment_state(ws, state)
+
+        progress = {"completed": ["task_a"], "running": {}, "timings": {}}
+        (ws / "exp" / "gpu_progress.json").write_text(json.dumps(progress))
+
+        updated = sync_completed_from_progress(ws)
+        assert updated.tasks["task_a"]["status"] == "completed"
+
+
 class TestExperimentStateLocking:
     def test_experiment_state_lock_exists(self):
         """experiment_state operations should use a file lock."""

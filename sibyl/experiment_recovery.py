@@ -70,6 +70,29 @@ def save_experiment_state(workspace_root: Path, state: ExperimentState) -> None:
             json.dump(asdict(state), f, indent=2)
 
 
+def sync_completed_from_progress(workspace_root: Path) -> ExperimentState:
+    """Load experiment state and sync any tasks that gpu_progress marks completed."""
+    state = load_experiment_state(workspace_root)
+    progress_path = workspace_root / "exp" / "gpu_progress.json"
+    if not progress_path.exists():
+        return state
+    try:
+        with open(progress_path, encoding="utf-8") as f:
+            progress = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return state
+
+    completed_set = set(progress.get("completed", []))
+    changed = False
+    for task_id in completed_set:
+        if task_id in state.tasks and state.tasks[task_id].get("status") == "running":
+            state.tasks[task_id]["status"] = "completed"
+            changed = True
+    if changed:
+        save_experiment_state(workspace_root, state)
+    return state
+
+
 def register_task(
     state: ExperimentState,
     task_id: str,

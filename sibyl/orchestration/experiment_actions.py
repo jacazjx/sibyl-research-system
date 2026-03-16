@@ -192,18 +192,12 @@ def build_experiment_batch_action(
         migrate_from_gpu_progress,
         register_dispatched_tasks,
         save_experiment_state,
+        sync_completed_from_progress,
     )
 
-    exp_state = load_experiment_state(orchestrator.ws.active_root)
+    exp_state = sync_completed_from_progress(orchestrator.ws.active_root)
     running_tasks = get_running_tasks(exp_state)
     running_gpus = get_running_gpu_ids(orchestrator.ws.active_root)
-
-    if running_tasks or running_gpus:
-        completed_set, _, _, _, _ = _load_progress(orchestrator.ws.active_root)
-        if _sync_completed_tasks(exp_state, running_tasks, completed_set):
-            save_experiment_state(orchestrator.ws.active_root, exp_state)
-            running_tasks = get_running_tasks(exp_state)
-            running_gpus = get_running_gpu_ids(orchestrator.ws.active_root)
 
     if orchestrator.config.gpu_poll_enabled:
         polled_free_gpus = read_poll_result(project_marker_file(orchestrator.ws.root, "gpu_free"))
