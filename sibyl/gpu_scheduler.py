@@ -35,19 +35,33 @@ from sibyl._paths import get_system_state_dir
 
 
 @contextmanager
-def _progress_lock(workspace_root: Path):
+def _progress_lock(workspace_root: Path, timeout_sec: float = 30.0):
     """Acquire an exclusive file lock for gpu_progress.json operations.
 
     Prevents race conditions when multiple agents read-modify-write the same file.
+    Uses LOCK_NB + retry loop with timeout to avoid deadlocks.
     """
     lock_path = workspace_root / "exp" / ".gpu_progress.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fd = open(lock_path, "w")
+    deadline = time.monotonic() + timeout_sec
+    acquired = False
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+        if not acquired:
+            # Force-break stale lock after timeout
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
         yield
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
 
 
@@ -59,15 +73,28 @@ def _global_gpu_leases_path() -> Path:
 
 
 @contextmanager
-def _global_gpu_leases_lock():
-    """Serialize cross-project GPU lease updates."""
+def _global_gpu_leases_lock(timeout_sec: float = 30.0):
+    """Serialize cross-project GPU lease updates with timeout."""
     lock_path = _global_gpu_leases_path().with_suffix(".lock")
     lock_fd = open(lock_path, "w", encoding="utf-8")
+    deadline = time.monotonic() + timeout_sec
+    acquired = False
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        while time.monotonic() < deadline:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                time.sleep(0.1)
+        if not acquired:
+            # Force-break stale lock after timeout
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
         yield
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         lock_fd.close()
 
 

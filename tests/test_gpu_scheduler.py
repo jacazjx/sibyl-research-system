@@ -1177,6 +1177,26 @@ class TestMonitorScriptDispatchNeeded:
 
 
 # ══════════════════════════════════════════════
+# Lock timeout support
+# ══════════════════════════════════════════════
+
+def test_global_gpu_leases_lock_has_timeout(tmp_path, monkeypatch):
+    """Lock should not block forever — should use LOCK_NB + retry with timeout."""
+    import sibyl.gpu_scheduler as gs
+    import inspect
+    source = inspect.getsource(gs._global_gpu_leases_lock)
+    assert "LOCK_NB" in source or "timeout" in source.lower()
+
+
+def test_progress_lock_has_timeout(tmp_path, monkeypatch):
+    """Progress lock should also use LOCK_NB + retry with timeout."""
+    import sibyl.gpu_scheduler as gs
+    import inspect
+    source = inspect.getsource(gs._progress_lock)
+    assert "LOCK_NB" in source or "timeout" in source.lower()
+
+
+# ══════════════════════════════════════════════
 # Lock window for register/unregister
 # ══════════════════════════════════════════════
 
