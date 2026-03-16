@@ -183,6 +183,7 @@ class Config:
             "max_iterations", "max_iterations_cap",
             "codex_enabled", "codex_model", "codex_idea_rounds",
             "writing_mode", "codex_writing_model",
+            "speculative_outline",
             "compute_backend",
             "experiment_mode", "server_codex_path", "server_claude_path",
             "remote_env_type", "remote_conda_path", "remote_conda_env_name",
@@ -254,6 +255,10 @@ class Config:
                 f"must be one of {valid_experiment_modes}"
             )
 
+        # Auto-normalize: experiment_mode 'local' implies compute_backend 'local'
+        if cfg.experiment_mode == "local" and cfg.compute_backend != "local":
+            cfg.compute_backend = "local"
+
         return cfg
 
     @classmethod
@@ -306,6 +311,7 @@ class Config:
             "compute_backend",
             "codex_enabled", "codex_model", "codex_idea_rounds",
             "writing_mode", "codex_writing_model",
+            "speculative_outline",
             "experiment_mode", "server_codex_path", "server_claude_path",
             "remote_env_type", "remote_conda_path", "remote_conda_env_name",
             "iteration_dirs",
@@ -491,6 +497,7 @@ max_parallel_tasks: {_val('max_parallel_tasks')}
 # ── Writing ─────────────────────────────────────────────────────────
 # "sequential" (best coherence) | "parallel" (faster) | "codex" (gpt-5.4)
 writing_mode: {_val('writing_mode')}
+speculative_outline: {_val('speculative_outline')}        # run outline in parallel with experiment_decision
 review_enabled: {_val('review_enabled')}
 
 # ── Codex Integration ───────────────────────────────────────────────
