@@ -1177,6 +1177,29 @@ class TestMonitorScriptDispatchNeeded:
 
 
 # ══════════════════════════════════════════════
+# Lock window for register/unregister
+# ══════════════════════════════════════════════
+
+def test_register_running_tasks_syncs_under_lock(tmp_path, monkeypatch):
+    """sync_workspace_gpu_leases must be called with running_map provided."""
+    from sibyl import gpu_scheduler
+
+    sync_calls = []
+
+    def tracking_sync(workspace_root, running_map=None):
+        sync_calls.append({"running_map_provided": running_map is not None})
+
+    monkeypatch.setattr(gpu_scheduler, "sync_workspace_gpu_leases", tracking_sync)
+
+    ws = tmp_path / "ws"
+    (ws / "exp").mkdir(parents=True)
+    gpu_scheduler.register_running_tasks(ws, {"task_a": [0, 1]})
+
+    assert len(sync_calls) == 1
+    assert sync_calls[0]["running_map_provided"] is True
+
+
+# ══════════════════════════════════════════════
 # _load_progress failed set
 # ══════════════════════════════════════════════
 

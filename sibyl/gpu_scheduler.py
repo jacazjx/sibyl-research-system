@@ -442,7 +442,9 @@ def register_running_tasks(workspace_root: Path, task_gpu_map: dict[str, list[in
 
         with open(progress_path, "w", encoding="utf-8") as f:
             json.dump(progress, f, indent=2)
-    sync_workspace_gpu_leases(workspace_root, progress.get("running", {}))
+
+        # Sync global leases INSIDE the lock so no one can modify progress between
+        sync_workspace_gpu_leases(workspace_root, progress.get("running", {}))
 
 
 def unregister_running_task(workspace_root: Path, task_id: str) -> None:
@@ -466,7 +468,8 @@ def unregister_running_task(workspace_root: Path, task_id: str) -> None:
             progress["running"] = running
             with open(progress_path, "w", encoding="utf-8") as f:
                 json.dump(progress, f, indent=2)
-    sync_workspace_gpu_leases(workspace_root)
+            # Sync global leases INSIDE the lock to prevent race
+            sync_workspace_gpu_leases(workspace_root, running)
 
 
 def get_running_gpu_ids(workspace_root: Path) -> list[int]:
