@@ -6,43 +6,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Recent Updates
-
-### 2026-03-17
-
-- **refactor**: Pipeline optimization — merge `writing_critique` into `writing_integrate`, speculative parallel `experiment_decision` + `writing_outline`, Lark sync whitelist, informative `quality_gate` output ([`3c73b52`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/3c73b52), [`4f988dc`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/4f988dc))
-- **refactor**: GPU scheduler optimization — critical path priority, batched SSH stuck detection, auto-retry for recoverable failures, `experiment_state.json` as authoritative source ([`5624332`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5624332), [`befe35a`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/befe35a), [`b95fe35`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b95fe35))
-- **refactor**: Reflection + evolution optimization — async `_post_reflection_hook`, effectiveness tracking, cross-language synonym normalization for issue dedup ([`ba1f398`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ba1f398))
-- **feat**: Codex-guided idea refinement, pluggable compute backend (local + SSH), CLI subcommands, plugin hooks, novelty-checker ([`08bbf62`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/08bbf62), [`4a32775`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/4a32775), [`809476f`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/809476f))
-- **feat**: Writing quality gates, deterministic LaTeX, self-heal daemon, experiment digest ([`7638a40`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7638a40), [`a64d321`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a64d321), [`d186e69`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/d186e69))
-- **fix**: GPU scheduling — file locking, lease TTL cleanup, failed task exclusion, stuck task detection, topo sort warnings ([`51d0a68`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/51d0a68), [`b4333e4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b4333e4), [`7152866`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7152866), [`cce8e3a`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/cce8e3a), [`86f62d3`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/86f62d3), [`fc0b9d6`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fc0b9d6), [`be67959`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/be67959), [`ba25925`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ba25925), [`0c4692f`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/0c4692f), [`e082d42`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/e082d42), [`eff0da2`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/eff0da2))
-
-### 2026-03-12 – 03-13
-
-- **feat**: Iteration directories as default, experiment supervisor recovery, orchestra skills for experiment agents ([`5ce9df4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5ce9df4), [`8642cda`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/8642cda), [`e960540`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/e960540))
-- **docs**: Quick start guide updates, macOS `.gitignore` ([`83ba348`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/83ba348), [`c2ccaa5`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/c2ccaa5))
-
-### 2026-03-11
-
-- **refactor**: Extract `orchestrate.py` into `sibyl/orchestration/` package, skills use `render_skill_prompt` ([`1fcd1ef`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/1fcd1ef), [`8e23f32`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/8e23f32))
-- **feat**: Evolution locking, global GPU leases, workspace session isolation, sentinel improvements, orchestra external skills ([`fb491b4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fb491b4), [`5733615`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5733615), [`f800e93`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/f800e93), [`6428ad8`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/6428ad8))
-
-### 2026-03-10
-
-- **release**: v0.6.1 ([`546cf07`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/546cf07))
-
-### 2026-03-08
-
-- **feat**: 6-agent idea/result debate, evolution engine overhaul (7 categories, time decay, agent-routed overlays), GPU-aware scheduling, parallel review stage, Task UI integration ([`d89dd7d`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/d89dd7d), [`a3be563`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a3be563), [`572f085`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/572f085), [`1187d2c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/1187d2c), [`5686a83`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5686a83), [`fc305c7`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fc305c7))
-- **test**: 134 pytest tests for orchestrator, workspace, and support modules ([`7a52b85`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7a52b85))
-- **fix**: 12 bug fixes across orchestrator, workspace, and plugin commands ([`a82d18c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a82d18c), [`5e3c5af`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5e3c5af), [`2e8b3a3`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/2e8b3a3), [`b29bb23`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b29bb23), [`ffdf1fd`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ffdf1fd), [`314972e`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/314972e), [`b0f0199`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b0f0199), [`6a4d438`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/6a4d438), [`142642b`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/142642b), [`21bbfa6`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/21bbfa6))
-
-### 2026-03-07
-
-- **feat**: Rewrite to Claude Code native architecture (v0.5.0) — LaTeX pipeline, Feishu upload, server migration ([`918ae17`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/918ae17), [`537d26c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/537d26c), [`51c18d8`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/51c18d8))
-
----
-
 > Inspired by the pioneering work of [The AI Scientist](https://github.com/SakanaAI/AI-Scientist), [FARS](https://analemma.ai/blog/introducing-fars/), and [AutoResearch](https://github.com/karpathy/autoresearch), Sibyl takes the vision further by building natively on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to fully leverage its agent ecosystem — skills, plugins, MCP servers, and multi-agent teams.
 
 [中文文档](README_CN.md)
@@ -197,6 +160,43 @@ claude --plugin-dir "$SIBYL_ROOT/plugin" --dangerously-skip-permissions
 </details>
 
 > **Docs**: [Full Setup Guide](docs/setup-guide.md) · [Configuration (35+ options)](docs/configuration.md) · [MCP Servers](docs/mcp-servers.md) · [SSH & GPU](docs/ssh-gpu-setup.md) · [All 12 Commands](docs/plugin-commands.md)
+
+---
+
+## Recent Updates
+
+### 2026-03-17
+
+- **refactor**: Pipeline optimization — merge `writing_critique` into `writing_integrate`, speculative parallel `experiment_decision` + `writing_outline`, Lark sync whitelist, informative `quality_gate` output ([`3c73b52`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/3c73b52), [`4f988dc`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/4f988dc))
+- **refactor**: GPU scheduler optimization — critical path priority, batched SSH stuck detection, auto-retry for recoverable failures, `experiment_state.json` as authoritative source ([`5624332`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5624332), [`befe35a`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/befe35a), [`b95fe35`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b95fe35))
+- **refactor**: Reflection + evolution optimization — async `_post_reflection_hook`, effectiveness tracking, cross-language synonym normalization for issue dedup ([`ba1f398`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ba1f398))
+- **feat**: Codex-guided idea refinement, pluggable compute backend (local + SSH), CLI subcommands, plugin hooks, novelty-checker ([`08bbf62`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/08bbf62), [`4a32775`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/4a32775), [`809476f`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/809476f))
+- **feat**: Writing quality gates, deterministic LaTeX, self-heal daemon, experiment digest ([`7638a40`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7638a40), [`a64d321`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a64d321), [`d186e69`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/d186e69))
+- **fix**: GPU scheduling — file locking, lease TTL cleanup, failed task exclusion, stuck task detection, topo sort warnings ([`51d0a68`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/51d0a68), [`b4333e4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b4333e4), [`7152866`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7152866), [`cce8e3a`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/cce8e3a), [`86f62d3`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/86f62d3), [`fc0b9d6`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fc0b9d6), [`be67959`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/be67959), [`ba25925`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ba25925), [`0c4692f`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/0c4692f), [`e082d42`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/e082d42), [`eff0da2`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/eff0da2))
+
+### 2026-03-12 – 03-13
+
+- **feat**: Iteration directories as default, experiment supervisor recovery, orchestra skills for experiment agents ([`5ce9df4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5ce9df4), [`8642cda`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/8642cda), [`e960540`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/e960540))
+- **docs**: Quick start guide updates, macOS `.gitignore` ([`83ba348`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/83ba348), [`c2ccaa5`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/c2ccaa5))
+
+### 2026-03-11
+
+- **refactor**: Extract `orchestrate.py` into `sibyl/orchestration/` package, skills use `render_skill_prompt` ([`1fcd1ef`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/1fcd1ef), [`8e23f32`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/8e23f32))
+- **feat**: Evolution locking, global GPU leases, workspace session isolation, sentinel improvements, orchestra external skills ([`fb491b4`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fb491b4), [`5733615`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5733615), [`f800e93`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/f800e93), [`6428ad8`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/6428ad8))
+
+### 2026-03-10
+
+- **release**: v0.6.1 ([`546cf07`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/546cf07))
+
+### 2026-03-08
+
+- **feat**: 6-agent idea/result debate, evolution engine overhaul (7 categories, time decay, agent-routed overlays), GPU-aware scheduling, parallel review stage, Task UI integration ([`d89dd7d`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/d89dd7d), [`a3be563`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a3be563), [`572f085`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/572f085), [`1187d2c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/1187d2c), [`5686a83`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5686a83), [`fc305c7`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/fc305c7))
+- **test**: 134 pytest tests for orchestrator, workspace, and support modules ([`7a52b85`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/7a52b85))
+- **fix**: 12 bug fixes across orchestrator, workspace, and plugin commands ([`a82d18c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/a82d18c), [`5e3c5af`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/5e3c5af), [`2e8b3a3`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/2e8b3a3), [`b29bb23`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b29bb23), [`ffdf1fd`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/ffdf1fd), [`314972e`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/314972e), [`b0f0199`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/b0f0199), [`6a4d438`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/6a4d438), [`142642b`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/142642b), [`21bbfa6`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/21bbfa6))
+
+### 2026-03-07
+
+- **feat**: Rewrite to Claude Code native architecture (v0.5.0) — LaTeX pipeline, Feishu upload, server migration ([`918ae17`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/918ae17), [`537d26c`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/537d26c), [`51c18d8`](https://github.com/Sibyl-Research-Team/sibyl-research-system/commit/51c18d8))
 
 ---
 
